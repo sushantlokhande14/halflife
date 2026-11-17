@@ -1,29 +1,35 @@
 {
-  "version": 1,
-  "fixed_at": "2026-11-17T23:21:43.910079+00:00",
+  "version": 2,
+  "fixed_at": "2026-11-17T23:41:46.185769+00:00",
+  "supersedes": {
+    "version": 1,
+    "why": "v1 was fit on data that counted 38 filings twice, once per share class of Alphabet, Fox and News Corp. v2 measures each company once, refits the models, recomputes the confidences, and scores gradient boosting's stance at the open alongside the rule's, because on the corrected data it was the one model that made money out of sample. Fixed before the runner had made any decision."
+  },
   "at_open": {
     "rule": "with the move",
     "segments": {
       "earnings": {
-        "events": 355,
-        "continuation_rate": 0.5380281690140845,
-        "continuation_low": 0.494377162040442,
-        "continuation_high": 0.5811038142724394,
-        "median_remaining_bps": 14.78265607702589,
-        "mean_remaining_bps": 39.38191800723528
+        "events": 352,
+        "continuation_rate": 0.5369318181818182,
+        "continuation_low": 0.4930965995831676,
+        "continuation_high": 0.5802035367762303,
+        "median_remaining_bps": 14.5143033552797,
+        "mean_remaining_bps": 38.15397217397766
       },
       "other": {
-        "events": 186,
-        "continuation_rate": 0.478494623655914,
-        "continuation_low": 0.41898296617457664,
-        "continuation_high": 0.5386230509094035,
-        "median_remaining_bps": -8.446075377568363,
-        "mean_remaining_bps": 8.095260735870776
+        "events": 174,
+        "continuation_rate": 0.4942528735632184,
+        "continuation_low": 0.43247061837553186,
+        "continuation_high": 0.556211148417649,
+        "median_remaining_bps": -2.2089456550133946,
+        "mean_remaining_bps": 5.832129555361659
       }
-    }
+    },
+    "scored_alongside": "gradient boosting"
   },
   "ten_minutes": {
     "rule": "logistic thresholds",
+    "model": "logistic, all features",
     "with": 0.55,
     "against": 0.45
   }

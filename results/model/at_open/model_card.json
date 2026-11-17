@@ -1,10 +1,10 @@
 {
   "decision": "Right after the regular open, for filings released before it",
-  "model": "logistic, all features",
-  "model_id": "5eaf23b6afd6",
-  "trained_events": 541,
+  "model": "gradient boosting",
+  "model_id": "c6781ae3e25b",
+  "trained_events": 526,
   "window": "2026-10-06 to 2026-11-16",
-  "continuation_base_rate": 0.5175600739371534,
+  "continuation_base_rate": 0.5228136882129277,
   "thresholds": {
     "with": 0.55,
     "against": 0.45
@@ -12,32 +12,5 @@
   "costs_bps": {
     "regular": 10.0,
     "extended": 30.0
-  },
-  "coefficients": {
-    "z_d": 0.2292,
-    "abs_z_d": -0.0549,
-    "pre_z_aligned": 0.006,
-    "retrace_z": -0.0671,
-    "late_z_aligned": 0.0232,
-    "active_share": -0.0404,
-    "market_aligned_bps": 0.0558,
-    "log_sigma": 0.0744,
-    "log_dollar_volume": -0.0318,
-    "log_minutes_to_h": 0.0369,
-    "log_minutes_to_decision": -0.1047,
-    "scheduled": 0.0597,
-    "session_pre": -0.0647,
-    "session_regular": 0.1675,
-    "session_post": 0.0548,
-    "session_closed": -0.031,
-    "category_earnings": 0.0663,
-    "category_deal": -0.0187,
-    "category_leadership": -0.0235,
-    "category_financing": 0.0063,
-    "category_disclosure": 0.0032,
-    "category_vote": -0.0263,
-    "category_governance": 0.2767,
-    "category_other": -0.1062,
-    "category_misc": -0.0561
   }
 }

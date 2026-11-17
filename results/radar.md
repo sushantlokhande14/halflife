@@ -26,6 +26,21 @@
 | 2026-11-23 | HPE | Hewlett Packard Enterprise Company | after the close | $1.17 | 7 |
 | 2026-11-23 | A | Agilent Technologies, Inc. | after the close | $1.72 | 7 |
 | 2026-11-23 | J | Jacobs Solutions Inc. | after the close | $2.11 | 3 |
+| 2026-11-24 | DELL | Dell Technologies Inc. | after the close | $6.41 | 8 |
+| 2026-11-24 | ADI | Analog Devices, Inc. | before the open | $3.89 | 10 |
+| 2026-11-24 | MDT | Medtronic plc | before the open | $1.34 | 8 |
+| 2026-11-24 | ADSK | Autodesk, Inc. | after the close | $2.27 | 10 |
+| 2026-11-24 | WDAY | Workday, Inc. | after the close | $1.28 | 10 |
+| 2026-11-24 | DLTR | Dollar Tree, Inc. | before the open | $0.88 | 9 |
+| 2026-11-24 | HPQ | HP Inc. | after the close | $0.74 | 5 |
+| 2026-11-24 | BBY | Best Buy Co., Inc. | before the open | $1.48 | 9 |
+| 2026-11-24 | SJM | The J.M. Smucker Company | before the open | $2.50 | 6 |
+| 2026-11-25 | DE | Deere & Company | before the open | $4.07 | 1 |
+
+What filings like these did in the study window (informative events, medians):
+
+- Released after the close: 47% moved the stock 2+ daily s.d.; median move 667 bps; half priced in after 464 trading minutes.
+- Released before the open: 47% moved the stock 2+ daily s.d.; median move 580 bps; half priced in after 89 trading minutes.
 
 ## IPOs
 

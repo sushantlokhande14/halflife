@@ -2,49 +2,53 @@
 
 ## Ten trading minutes after the filing
 
-Eligible events (moved at least 0.5 daily s.d. by the decision): 171; out of sample: 58 across 3 weekly folds. Base rate of continuation: 49.7%.
+Eligible events (moved at least 0.5 daily s.d. by the decision): 169; out of sample: 56 across 3 weekly folds. Base rate of continuation: 49.7%.
 
-| model | events | auc | brier | brier_skill | log_loss | decisions | coverage | hit_rate | mean_gross_bps | mean_net_bps | t_net |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| base rate | 58 | 0.500 | 0.2510 | -0.005 | 0.6951 | 0 | 0% |  |  |  |  |
-| reaction size only | 58 | 0.433 | 0.2571 | -0.030 | 0.7074 | 23 | 40% | 39.1% | -190.2 | -220.2 | -1.39 |
-| logistic, all features | 58 | 0.470 | 0.2754 | -0.103 | 0.8700 | 36 | 62% | 44.4% | -152.8 | -182.3 | -2.02 |
-| gradient boosting | 58 | 0.507 | 0.2661 | -0.066 | 0.7260 | 46 | 79% | 52.2% | -29.2 | -58.3 | -0.55 |
-| always with the move | 58 |  |  |  |  | 58 | 100% | 48.3% | 1.1 | -28.2 | -0.32 |
-| always against the move | 58 |  |  |  |  | 58 | 100% | 51.7% | -1.1 | -30.5 | -0.35 |
+| model | events | auc | brier | brier_skill | log_loss | decisions | coverage | hit_rate | mean_gross_bps | mean_net_bps | t_net | t_net_days |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| base rate | 56 | 0.500 | 0.2503 | -0.001 | 0.6937 | 0 | 0% |  |  |  |  |  |
+| reaction size only | 56 | 0.471 | 0.2580 | -0.032 | 0.7091 | 28 | 50% | 42.9% | -94.0 | -124.0 | -0.80 | -1.29 |
+| logistic, all features | 56 | 0.499 | 0.2720 | -0.088 | 0.8691 | 40 | 71% | 47.5% | -133.3 | -162.3 | -1.53 | 0.09 |
+| gradient boosting | 56 | 0.503 | 0.2692 | -0.077 | 0.7319 | 44 | 79% | 50.0% | -48.2 | -77.3 | -0.69 | -0.56 |
+| always with the move | 56 |  |  |  |  | 56 | 100% | 50.0% | 11.5 | -17.7 | -0.19 | 0.46 |
+| always against the move | 56 |  |  |  |  | 56 | 100% | 50.0% | -11.5 | -40.8 | -0.45 | -1.00 |
 
-Reliability of the main model's out-of-sample probabilities:
+t_net counts every trade; t_net_days counts each trading day once.
+
+Reliability of the live model's out-of-sample probabilities (logistic, all features):
 
 | bin | predicted | observed | events |
 |---:|---:|---:|---:|
-| 0 | 0.309 | 0.333 | 12 |
-| 1 | 0.409 | 0.727 | 11 |
-| 2 | 0.488 | 0.750 | 12 |
-| 3 | 0.543 | 0.182 | 11 |
-| 4 | 0.731 | 0.417 | 12 |
+| 0 | 0.295 | 0.364 | 11 |
+| 1 | 0.426 | 0.455 | 11 |
+| 2 | 0.498 | 0.818 | 11 |
+| 3 | 0.549 | 0.545 | 11 |
+| 4 | 0.714 | 0.333 | 12 |
 
 ## Right after the regular open, for filings released before it
 
-Eligible events (moved at least 0.5 daily s.d. by the decision): 541; out of sample: 386 across 4 weekly folds. Base rate of continuation: 51.8%.
+Eligible events (moved at least 0.5 daily s.d. by the decision): 526; out of sample: 374 across 4 weekly folds. Base rate of continuation: 52.3%.
 
-| model | events | auc | brier | brier_skill | log_loss | decisions | coverage | hit_rate | mean_gross_bps | mean_net_bps | t_net |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| base rate | 386 | 0.500 | 0.2537 | -0.023 | 0.7005 | 0 | 0% |  |  |  |  |
-| reaction size only | 386 | 0.487 | 0.2544 | -0.025 | 0.7018 | 70 | 18% | 45.7% | -58.6 | -68.6 | -1.58 |
-| logistic, all features | 386 | 0.474 | 0.2841 | -0.145 | 0.7812 | 287 | 74% | 47.0% | -12.3 | -22.3 | -1.09 |
-| gradient boosting | 386 | 0.509 | 0.2724 | -0.098 | 0.7467 | 296 | 77% | 51.7% | 26.0 | 16.0 | 0.78 |
-| always with the move | 386 |  |  |  |  | 386 | 100% | 54.4% | 57.7 | 47.7 | 2.78 |
-| always against the move | 386 |  |  |  |  | 386 | 100% | 45.6% | -57.7 | -67.7 | -3.94 |
+| model | events | auc | brier | brier_skill | log_loss | decisions | coverage | hit_rate | mean_gross_bps | mean_net_bps | t_net | t_net_days |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| base rate | 374 | 0.500 | 0.2511 | -0.011 | 0.6953 | 0 | 0% |  |  |  |  |  |
+| reaction size only | 374 | 0.493 | 0.2528 | -0.018 | 0.6989 | 55 | 15% | 40.0% | -80.7 | -90.7 | -1.69 | -0.64 |
+| logistic, all features | 374 | 0.470 | 0.2798 | -0.126 | 0.7651 | 266 | 71% | 45.5% | -19.3 | -29.3 | -1.35 | -1.49 |
+| gradient boosting | 374 | 0.535 | 0.2652 | -0.068 | 0.7309 | 299 | 80% | 55.2% | 50.8 | 40.8 | 2.06 | 1.53 |
+| always with the move | 374 |  |  |  |  | 374 | 100% | 54.0% | 55.9 | 45.9 | 2.60 | 0.19 |
+| always against the move | 374 |  |  |  |  | 374 | 100% | 46.0% | -55.9 | -65.9 | -3.74 | -0.81 |
 
-Reliability of the main model's out-of-sample probabilities:
+t_net counts every trade; t_net_days counts each trading day once.
+
+Reliability of the live model's out-of-sample probabilities (gradient boosting):
 
 | bin | predicted | observed | events |
 |---:|---:|---:|---:|
-| 0 | 0.255 | 0.623 | 77 |
-| 1 | 0.425 | 0.519 | 77 |
-| 2 | 0.509 | 0.603 | 78 |
-| 3 | 0.591 | 0.434 | 76 |
-| 4 | 0.727 | 0.538 | 78 |
+| 0 | 0.327 | 0.467 | 75 |
+| 1 | 0.461 | 0.533 | 75 |
+| 2 | 0.561 | 0.581 | 74 |
+| 3 | 0.666 | 0.560 | 75 |
+| 4 | 0.789 | 0.560 | 75 |
 
 ### Stress test: go with the opening move, every event, hold to the close
 
@@ -52,19 +56,54 @@ t_days counts each trading day once (events on the same day are not independent)
 
 | slice | events | days | hit_rate | mean_net_bps | net_low_bps | net_high_bps | median_net_bps | trimmed_mean_net_bps | t_events | t_days |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| all events | 541 | 29 | 51.8% | 18.6 | -4.7 | 41.9 | -1.3 | 17.7 | 1.34 | -0.70 |
-| week of Oct 05 | 19 | 4 | 47.4% | -28.6 | -91.6 | 33.0 | -15.3 | -28.6 | -0.73 | -2.26 |
-| week of Oct 12 | 44 | 4 | 47.7% | -23.0 | -88.0 | 40.8 | -24.3 | -29.8 | -0.59 | -0.31 |
-| week of Oct 19 | 90 | 5 | 44.4% | -72.9 | -126.2 | -24.1 | -20.8 | -55.1 | -2.36 | -2.89 |
-| week of Oct 26 | 171 | 5 | 54.4% | 54.8 | 14.0 | 96.9 | 1.5 | 43.3 | 2.17 | 1.45 |
-| week of Nov 02 | 175 | 5 | 57.7% | 64.4 | 19.3 | 109.3 | 27.3 | 69.1 | 2.39 | 1.25 |
-| week of Nov 09 | 33 | 5 | 30.3% | -91.8 | -166.6 | -21.4 | -51.4 | -83.6 | -2.04 | -1.85 |
-| week of Nov 16 | 9 | 1 | 66.7% | 64.0 | -15.2 | 153.6 | 54.2 | 64.0 | 1.15 |  |
-| filed after the close | 292 | 26 | 52.1% | 25.8 | -2.8 | 54.2 | 0.6 | 24.2 | 1.49 | 0.42 |
-| filed before the open | 245 | 27 | 51.4% | 12.5 | -24.1 | 49.9 | -4.5 | 12.5 | 0.56 | -0.88 |
-| earnings | 355 | 27 | 53.8% | 29.4 | -4.7 | 62.0 | 4.8 | 30.2 | 1.49 | 0.52 |
-| other filings | 186 | 29 | 47.8% | -1.9 | -25.5 | 21.1 | -18.4 | -1.5 | -0.13 | -0.47 |
-| opening move 2+ daily s.d. | 147 | 23 | 48.3% | -10.6 | -65.0 | 43.4 | -17.5 | -3.2 | -0.32 | 0.01 |
-| opening move 0.5-2 daily s.d. | 394 | 29 | 53.0% | 29.5 | 5.6 | 52.9 | 2.7 | 23.4 | 2.05 | -0.15 |
-| all events, 20 bps cost | 541 | 29 | 51.8% | 8.6 | -14.1 | 31.7 | -11.3 | 7.7 | 0.62 | -1.20 |
-| all events, 30 bps cost | 541 | 29 | 51.8% | -1.4 | -24.1 | 21.6 | -21.3 | -2.3 | -0.10 | -1.71 |
+| all events | 526 | 29 | 52.3% | 17.5 | -6.6 | 40.5 | -0.4 | 16.6 | 1.23 | -0.75 |
+| week of Oct 05 | 20 | 4 | 60.0% | -17.5 | -78.5 | 41.9 | 6.9 | -16.8 | -0.46 | -1.51 |
+| week of Oct 12 | 40 | 4 | 52.5% | -21.9 | -91.7 | 48.9 | -8.6 | -29.4 | -0.51 | -0.37 |
+| week of Oct 19 | 90 | 5 | 44.4% | -72.6 | -125.5 | -23.6 | -20.8 | -54.8 | -2.34 | -2.81 |
+| week of Oct 26 | 164 | 5 | 54.3% | 57.0 | 14.4 | 101.4 | 1.1 | 45.2 | 2.17 | 0.93 |
+| week of Nov 02 | 170 | 5 | 57.1% | 59.2 | 13.6 | 105.4 | 22.5 | 63.4 | 2.14 | 1.20 |
+| week of Nov 09 | 33 | 5 | 30.3% | -91.8 | -167.0 | -22.1 | -51.4 | -83.6 | -2.04 | -1.85 |
+| week of Nov 16 | 9 | 1 | 66.7% | 64.0 | -13.1 | 156.9 | 54.2 | 64.0 | 1.15 |  |
+| outside the two busiest weeks | 192 | 19 | 46.4% | -53.2 | -85.3 | -22.6 | -18.8 | -44.1 | -2.75 | -2.46 |
+| filed after the close | 282 | 26 | 52.8% | 25.4 | -4.6 | 54.2 | 0.8 | 23.7 | 1.42 | 0.43 |
+| filed before the open | 239 | 27 | 51.5% | 10.4 | -27.4 | 48.5 | -6.5 | 10.6 | 0.45 | -0.95 |
+| earnings | 352 | 27 | 53.7% | 28.2 | -4.2 | 60.0 | 4.5 | 28.9 | 1.42 | 0.52 |
+| other filings | 174 | 29 | 49.4% | -4.2 | -29.4 | 19.9 | -12.2 | -3.9 | -0.28 | -0.56 |
+| opening move 2+ daily s.d. | 145 | 23 | 48.3% | -12.4 | -67.0 | 42.7 | -17.5 | -5.0 | -0.37 | -0.01 |
+| opening move 0.5-2 daily s.d. | 381 | 29 | 53.8% | 28.8 | 4.1 | 53.1 | 4.5 | 22.3 | 1.94 | -0.18 |
+| all events, 20 bps cost | 526 | 29 | 52.3% | 7.5 | -16.5 | 30.8 | -10.4 | 6.6 | 0.53 | -1.25 |
+| all events, 30 bps cost | 526 | 29 | 52.3% | -2.5 | -25.9 | 20.4 | -20.4 | -3.4 | -0.18 | -1.75 |
+
+### Stress test: gradient boosting at neighbouring settings (walk-forward, out of sample)
+
+| max_depth | learning_rate | rounds | used | auc | decisions | mean_net_bps | t_net | t_net_days |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 0.03 | 100 | False | 0.545 | 268 | 41.1 | 2.01 | 2.02 |
+| 2 | 0.03 | 150 | False | 0.541 | 282 | 44.4 | 2.26 | 2.10 |
+| 2 | 0.03 | 200 | False | 0.535 | 289 | 45.7 | 2.28 | 1.84 |
+| 2 | 0.05 | 100 | False | 0.538 | 287 | 43.4 | 2.20 | 1.87 |
+| 2 | 0.05 | 150 | True | 0.535 | 299 | 40.8 | 2.06 | 1.53 |
+| 2 | 0.05 | 200 | False | 0.530 | 307 | 33.8 | 1.75 | 1.39 |
+| 2 | 0.10 | 100 | False | 0.526 | 315 | 41.4 | 2.23 | 2.11 |
+| 2 | 0.10 | 150 | False | 0.518 | 321 | 30.6 | 1.60 | 1.49 |
+| 2 | 0.10 | 200 | False | 0.511 | 328 | 16.7 | 0.85 | 0.19 |
+| 3 | 0.03 | 100 | False | 0.528 | 291 | 43.8 | 2.16 | 2.20 |
+| 3 | 0.03 | 150 | False | 0.523 | 306 | 43.2 | 2.21 | 1.83 |
+| 3 | 0.03 | 200 | False | 0.525 | 320 | 41.7 | 2.13 | 1.97 |
+| 3 | 0.05 | 100 | False | 0.528 | 305 | 49.3 | 2.50 | 2.29 |
+| 3 | 0.05 | 150 | False | 0.521 | 321 | 35.7 | 1.82 | 1.74 |
+| 3 | 0.05 | 200 | False | 0.528 | 327 | 39.5 | 2.04 | 1.62 |
+| 3 | 0.10 | 100 | False | 0.515 | 323 | 31.9 | 1.68 | 1.54 |
+| 3 | 0.10 | 150 | False | 0.518 | 330 | 20.3 | 1.07 | 0.26 |
+| 3 | 0.10 | 200 | False | 0.517 | 342 | 16.7 | 0.89 | -0.06 |
+
+### Where gradient boosting's out-of-sample money came from
+
+| slice | trades | with_the_move_share | mean_net_bps | t_net |
+|---|---:|---:|---:|---:|
+| week of Oct 26 | 132 | 65% | 52.3 | 1.89 |
+| week of Nov 02 | 128 | 61% | 38.1 | 1.11 |
+| week of Nov 09 | 30 | 73% | 5.5 | 0.11 |
+| week of Nov 16 | 9 | 78% | 26.4 | 0.44 |
+| with the move | 193 | 100% | 73.7 | 3.36 |
+| against the move | 106 | 0% | -19.2 | -0.50 |

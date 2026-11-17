@@ -2,16 +2,16 @@
 
 How fast is public news priced into a stock, and is anything left to trade once you see it?
 
-Halflife measures the first question for every 8-K filed by an S&P 500 company over six weeks of the Q3 2026 earnings season, at 2-minute resolution, including pre- and post-market trading. It tests the second with a walk-forward model and a set of stress tests, and it keeps answering both live: it watches the SEC for new filings, makes a timestamped prediction for each one, and scores it after the close in a hash-chained ledger that cannot be edited after the fact.
+Halflife measures the first question for every 8-K filed by an S&P 500 company over six weeks of the Q3 2026 earnings season, at 2-minute resolution, including pre- and post-market trading. It tests the second with walk-forward models and a set of stress tests, and it keeps answering both live: it watches the SEC for new filings, makes a timestamped prediction for each one, and scores it after the close in a hash-chained ledger that cannot be edited after the fact.
 
 | | |
 |---|---|
-| Filings measured | **920** 8-K events from 503 companies, Oct 6 to Nov 16, 2026, plus 1,502 placebo moments with no filing |
+| Filings measured | **882** 8-K events from 476 companies, Oct 6 to Nov 16, 2026, plus 1,497 placebo moments with no filing |
 | Earnings released after the close | half the move is in after a median **464 trading minutes**: around 8 the next morning |
 | Earnings released before the open | half the move is in after a median **89 trading minutes** |
 | The regular open | its first two minutes add **a quarter** of an earnings release's entire move (23% to 25%, median) |
-| Trading the first reaction | following the move 4 minutes after an earnings filing **lost 66 bps** on average before costs (90% interval: -109 to -22) |
-| A tradable edge after the open | **none found**: the best rule's out-of-sample t of 2.8 falls to -0.7 once trades on the same day are counted together |
+| Trading the first reaction | following the move 4 minutes after an earnings filing **lost 63 bps** on average before costs (90% interval: -108 to -18) |
+| A tradable edge after the open | **not established**: counting each trading day once, the best rule's out-of-sample t falls from 2.6 to 0.2, and the one model that made money falls from 2.1 to 1.5. Both are now scored live |
 
 None of this is investment advice. Nothing here places orders.
 
@@ -27,19 +27,21 @@ None of this is investment advice. Nothing here places orders.
 
 A move only has a half-life if there was a move. An event counts as informative when its total move is at least two of the stock's daily standard deviations, using volatility from the 20 sessions before the event and nothing after it.
 
+Each company is measured once. Alphabet, Fox and News Corp have two share classes in the index, so the S&P 500's 503 tickers are 500 companies; for those three, the more liquid class is used, chosen from trading before the window.
+
 ## What the measurements say
 
 ### Most 8-Ks are not news. Earnings are.
 
 ![Share of filings that moved the stock at least two daily standard deviations](results/figures/informative_share.png)
 
-To check the threshold, the study also measures 1,502 random moments with no filing within two trading days. 6.4% of them clear it anyway. That is the false-positive rate. Earnings releases clear it 46% of the time. Executive changes (3%), routine "other events" (7%) and deals (10%) are close to the random baseline: by price, most material-event filings are not surprises.
+To check the threshold, the study also measures 1,497 random moments with no filing within two trading days. 5.3% of them clear it anyway (90% interval: 4.5% to 6.4%). That is the false-positive rate. Earnings releases clear it 46% of the time. Executive changes (3%) and routine "other events" (6%) look like random moments, and deals do only a little better (10%, from 77 filings). By price, most material-event filings are not surprises.
 
 ### After-hours trading prices earnings slowly. The open does the work.
 
 ![Share of the eventual move priced in, by trading time after the filing](results/figures/incorporation_curves.png)
 
-For the 93 informative earnings releases filed after the close, a median of 6% of the move is in after an hour of after-hours trading and 37% by the next morning's open. Then the first two minutes of the regular session add 23% at once. For releases before the open, 20% is in by the open and the first two minutes add 25%.
+For the 91 informative earnings releases filed after the close, a median of 6% of the move is in after an hour of after-hours trading and 37% by the next morning's open. Then the first two minutes of the regular session add 23% at once. For the 116 released before the open, 20% is in by the open and the first two minutes add 25%.
 
 ![Time to half of the move, informative earnings releases](results/figures/earnings_half_life.png)
 
@@ -54,43 +56,59 @@ Two things these numbers do not say:
 
 ![What is left of an informative move when you get there](results/figures/latency_earnings.png)
 
-Of an informative earnings move, a median 99% is still ahead ten minutes after the filing, 86% after an hour, and 34% after four hours of trading time. "Ahead" assumes you know the direction. Without that knowledge, trading in the direction of the move so far lost money at every latency measured. At 4 minutes after an earnings filing, it lost 66 bps on average before costs. Early reactions overshoot often enough that following them is a losing rule.
+Of an informative earnings move, a median 99% is still ahead ten minutes after the filing, 86% after an hour, and 34% after four hours of trading time. "Ahead" assumes you know the direction. Without that knowledge, trading in the direction of the move so far lost money on average at every latency measured. At 4 minutes after an earnings filing, it lost 63 bps on average before costs. Early reactions overshoot often enough that following them is a losing rule.
 
-## Can anything be predicted? Mostly, no.
+## Can anything be predicted? Not reliably, yet.
 
-The model asks one question: given what is known at the decision time, will the move so far continue to the settling close, or reverse? Its probability is the confidence, and a fixed rule turns it into a stance: with the move at 0.55 or above, against it at 0.45 or below, otherwise stand aside. Each stance pays a round-trip cost: 10 bps in the regular session, 30 bps in extended hours.
+The models ask one question: given what is known at the decision time, will the move so far continue to the settling close, or reverse? The probability is the confidence, and a fixed rule turns it into a stance: with the move at 0.55 or above, against it at 0.45 or below, otherwise stand aside. Each stance pays a round-trip cost: 10 bps in the regular session, 30 bps in extended hours.
 
-Evaluation is walk-forward by calendar week. Each week is predicted by models trained only on events whose outcome was already known before that week began. A test shows that two opposite futures give identical features: nothing after the decision time can reach them.
+Evaluation is walk-forward by calendar week. Each week is predicted by models trained only on events whose outcome was already known before that week began. A test shows that two opposite futures give identical features: nothing after the decision time can reach them. Returns are tested twice: per trade, and per trading day, because filings decided on the same morning share that morning's market and are not independent bets.
 
-**Ten minutes after the filing.** 171 filings had moved their stock at least half a daily standard deviation by then; 58 could be tested out of sample. No model had skill (AUC 0.43 to 0.51), and every one lost money after costs. The 10-minute mark is too early: the study shows almost nothing is priced in yet.
+**Ten minutes after the filing.** 169 filings had moved their stock at least half a daily standard deviation by then; 56 could be tested out of sample. No model had skill (AUC 0.47 to 0.50), and every model and rule lost money after costs. The 10-minute mark is too early: the study shows almost nothing is priced in yet.
 
-**Right after the regular open, for filings released before it.** The study says the open is where the price is found, so this is the second decision point. 541 events, 386 out of sample across four weeks. Logistic regression and gradient boosting again had no skill (AUC 0.47 to 0.51) and their probabilities were not calibrated. But the simplest rule, always go with the opening move and hold to the close, earned **+47.7 bps per trade after costs, t = 2.78**, out of sample.
+**Right after the regular open, for filings released before it.** The study says the open is where the price is found, so this is the second decision point: 526 events, 374 out of sample across four weeks ([results/model/findings.md](results/model/findings.md)).
 
-That result did not survive the stress test ([results/model/at_open/rule_robustness.csv](results/model/at_open/rule_robustness.csv)):
+- Logistic regression had no skill (AUC 0.47) and lost money.
+- The simplest rule, always go with the opening move and hold to the close, earned **+45.9 bps per trade after costs, t = 2.60**.
+- Gradient boosting ranked events a little better than chance (AUC 0.535) and its stances earned **+40.8 bps per trade, t = 2.06**. Its probabilities were too extreme to use as confidences: when it said 0.79, the move continued 56% of the time.
 
-| Check | Result |
+Each got a stress test. The rule has nothing fitted, so it can be tested on all 526 events ([rule_robustness.csv](results/model/at_open/rule_robustness.csv)):
+
+| Check | Go with the opening move |
 |---|---|
-| All 541 events, mean net of 10 bps | +18.6 bps, 90% interval -4.7 to +41.9 |
-| Median trade | -1.3 bps |
-| Counting each trading day once (events on one day are not independent) | t = -0.70 |
-| By week | positive in 2 weeks of 6: the two busiest of the earnings season |
-| At 20 or 30 bps of cost | +8.6 and -1.4 bps |
+| All 526 events, mean net of 10 bps | +17.5 bps, 90% interval -6.6 to +40.5 |
+| Median trade | -0.4 bps |
+| Counting each trading day once | t = -0.75 (out-of-sample events only: 0.19) |
+| By week | positive in 3 of 7: the two busiest of the earnings season, and Nov 16, a single day |
+| Outside those two weeks | -53.2 bps per trade over 192 events (90% interval -85 to -23) |
+| At 20 or 30 bps of cost | +7.5 and -2.5 bps |
 
-A t of 2.8 from two busy weeks is what a false positive looks like. The conclusion is that six weeks of data show no reliable edge after the open.
+Gradient boosting is fitted, so only its out-of-sample weeks count ([boosting_breakdown.csv](results/model/at_open/boosting_breakdown.csv), [boosting_neighbors.csv](results/model/at_open/boosting_neighbors.csv)):
+
+| Check | Gradient boosting |
+|---|---|
+| Counting each trading day once | t = 1.53, over 16 trading days |
+| By week | positive in all four: +52, +38, +6 and +26 bps per trade (the last week is one day) |
+| At the 18 nearby settings of depth, learning rate and rounds | 11 reach t of 2 per trade; per trading day, the median is 1.8 |
+| Where the money came from | going with the move: +73.7 bps over 193 trades; going against it: -19.2 bps over 106 |
+
+The rule's t of 2.6 is what two busy weeks look like: once each day counts once, nothing is left. Gradient boosting holds up better, and steadily across nearby settings. Its gain comes from choosing which opening moves to follow, not from fading them. But four weeks, 16 trading days, a per-day t of 1.5 and ten strategies tried across two decision points do not make an edge. Six weeks of data show no reliable edge after the open; they show one candidate worth watching.
 
 ## Live: a record that cannot be edited
 
-The rule that looked good and then fell apart is exactly what a live test is for. It is fixed as policy v1 in [results/model/policy.json](results/model/policy.json), timestamped before any live outcome existed.
+The two results that weakened under scrutiny are exactly what a live test is for. Both are fixed in policy v2, [results/model/policy.json](results/model/policy.json), timestamped before the runner made any decision.
 
 `halflife live` polls the SEC's search index every 20 seconds during trading hours. When an S&P 500 company files an 8-K, it looks up the exact acceptance time and records the detection, with its latency. Then:
 
-- **Ten trading minutes in:** the 10-minute model's probability and stance.
-- **After the open's first bar, for filings released before it:** policy v1's stance (with the move) and its confidence. The confidence is the historical continuation rate for that kind of filing, with an interval: 53.8% (49.4% to 58.1%) for earnings, from 355 events. It is deliberately not a model output.
-- **After the settling close:** the outcome, net of costs, against each prediction.
+- **Ten trading minutes in:** the logistic model's probability and stance, kept as a control: it had no skill in the backtest.
+- **After the open's first bar, for filings released before it:** two stances, scored side by side. The rule's (with the move), with its confidence: the historical continuation rate for that kind of filing, with an interval, 53.7% (49.3% to 58.0%) for earnings from 352 events. It is deliberately not a model output. And gradient boosting's probability and stance.
+- **After the settling close:** the outcome, net of costs, for each stance.
 
 A filing that has not moved its stock is recorded as skipped. A decision more than ten minutes late is also skipped, not made. The runner ignores everything filed before it first started.
 
-Every entry goes into [results/ledger.jsonl](results/ledger.jsonl) with the hash of the entry before it. Changing, deleting or reordering any past entry breaks every hash after it (`halflife verify-ledger`), and tests show each of those forgeries being caught. Committing the ledger to git before outcomes are known adds an outside timestamp. The live record started on Nov 17, 2026. It is far too young to say anything yet; it exists so that in a few months it can.
+Every entry goes into [results/ledger.jsonl](results/ledger.jsonl) with the hash of the entry before it. Changing, deleting or reordering any past entry breaks every hash after it (`halflife verify-ledger`), and tests show each of those forgeries being caught. Committing the ledger to git before outcomes are known adds an outside timestamp.
+
+The record started on Nov 17, 2026, under policy v1. Twenty minutes later, before any decision, a check found that v1 had been fit on data that counted 38 filings twice: one 8-K from Alphabet, Fox or News Corp had been measured once per share class. Removing those duplicates, under 3% of the data, moved gradient boosting's out-of-sample t from 0.78 to 2.06 and the rule's from 2.78 to 2.60. The ledger's second entry records the switch to v2 and why; nothing in it was rewritten. A backtest that sensitive is one more reason to judge these strategies by the live record. It is far too young to say anything yet; it exists so that in a few months it can.
 
 ## The radar
 
@@ -104,9 +122,9 @@ Only one FOMC statement fell inside the 2-minute data window (Oct 28). SPY was u
 pip install -e ".[test]"
 halflife ingest      # S&P 500 list, 8-K filings, 2-minute and daily bars (about 2,000 paced requests)
 halflife study       # measure every filing, write results/study and the figures
-halflife model       # walk-forward evaluation, stress test, live policy
+halflife model       # walk-forward evaluation, stress tests, live policy
 halflife radar
-halflife live        # runs until stopped; results/ledger.jsonl
+halflife live        # runs until stopped with Ctrl-C; results/ledger.jsonl
 halflife verify-ledger
 pytest
 ```
@@ -115,13 +133,14 @@ The SEC asks automated clients to identify themselves. Set `HALFLIFE_SEC_USER_AG
 
 ## Tests
 
-41 tests, all passing. They cover:
+43 tests, all passing. They cover:
 
 - the trading clock, including that nights and weekends take no time and that the grid never sees a later trade;
 - recovery of known half-lives from synthetic paths, with and without noise;
 - point-in-time features: two opposite futures give identical features;
 - walk-forward folds that never train on an outcome from after the fold began;
-- the ledger catching an edit, a careful re-hash, a deletion and a reordering;
+- one share class per company, so no filing is measured twice;
+- the ledger catching an edit, a careful re-hash, a deletion and a reordering, and recording a change of models exactly once;
 - every parser, run against recorded responses.
 
 ## Limits
@@ -138,8 +157,8 @@ halflife/clock.py       the trading clock: 2-minute steps over 04:00 to 20:00 Ea
 halflife/diffusion.py   an event's path, its half-life, and what share is in at each checkpoint
 halflife/study.py       every filing measured, placebo moments, summaries, latency tables
 halflife/features.py    what is known at decision time, cut so nothing later can be read
-halflife/model.py       walk-forward evaluation, stances, costs
-halflife/robustness.py  the stress test for the one rule that made money
+halflife/model.py       walk-forward evaluation, stances, costs, per-trade and per-day tests
+halflife/robustness.py  the stress tests for what made money at the open
 halflife/live.py        detection, decisions and resolutions, into the ledger
 halflife/ledger.py      the hash chain
 halflife/sources/       SEC, Yahoo, Fed, Nasdaq and Wikipedia readers
