@@ -25,8 +25,8 @@ import pandas as pd
 
 from .clock import Clock, minute_of_day, session, trading_days
 from .config import DATA, MARKET, RESULTS, UTC
-from .diffusion import CHECKPOINTS, Path, build_path, fit_two_speed, measure
-from .ingest import load_bars
+from .diffusion import CHECKPOINTS, Path, build_path, measure
+from .ingest import companies, load_bars
 from .sources.sec import CATEGORY_ORDER
 
 log = logging.getLogger("halflife.study")
@@ -101,7 +101,7 @@ def _event_row(event: dict, path: Path, sigma: float, dollar_volume: float, cloc
 
 def build(placebo_seed: int = 17) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Path]]:
     """Events and placebo pseudo-events, each with its measurements, and every path."""
-    universe = pd.read_parquet(DATA / "universe.parquet")
+    universe = companies()
     filings = merge_bursts(pd.read_parquet(DATA / "filings.parquet"))
     market_bars = load_bars("2m", MARKET)
     market_daily = load_bars("1d", MARKET)
@@ -190,7 +190,10 @@ def build(placebo_seed: int = 17) -> tuple[pd.DataFrame, pd.DataFrame, dict[str,
                 break
     events = pd.DataFrame(rows).sort_values("accepted_at").reset_index(drop=True)
     placebo = pd.DataFrame(placebo_rows).sort_values("accepted_at").reset_index(drop=True)
-    log.info("events: %d measured, %d placebo moments", len(events), len(placebo))
+    # Paths are keyed by event: one filing measured twice would silently share one path.
+    if not events["event_id"].is_unique:
+        raise ValueError("an event was measured twice; is a company listed under two tickers?")
+    log.info("events: %d measured from %d companies, %d placebo moments", len(events), events["ticker"].nunique(), len(placebo))
     return events, placebo, paths
 
 

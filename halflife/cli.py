@@ -57,15 +57,17 @@ def main(argv: list[str] | None = None) -> int:
 
         print(run_radar(args.days))
     elif args.command == "live":
-        import pandas as pd
-
-        from .config import DATA
         from .http import Fetcher
+        from .ingest import companies
         from .live import Runner, load_bundle
 
         with Fetcher() as fetcher:
-            runner = Runner(fetcher, pd.read_parquet(DATA / "universe.parquet"), load_bundle())
-            runner.run(minutes=args.minutes, poll_seconds=args.poll)
+            runner = Runner(fetcher, companies(), load_bundle())
+            try:
+                runner.run(minutes=args.minutes, poll_seconds=args.poll)
+            except KeyboardInterrupt:
+                runner.state.save()
+                print("stopped; state saved")
     elif args.command == "verify-ledger":
         from .ledger import verify
 

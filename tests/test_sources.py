@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from halflife.sources import calendars, prices, sec
+from halflife.sources import calendars, prices, sec, universe
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -81,3 +81,17 @@ def test_earnings_and_ipo_calendars_parse():
     assert set(earnings["timing"]) <= {"before the open", "after the close", "time not given"}
     ipos = calendars.parse_ipos((FIXTURES / "nasdaq_ipos.json").read_text(encoding="utf-8"))
     assert set(ipos["status"]) <= {"upcoming", "priced"} and len(ipos) > 0
+
+
+def test_one_share_class_per_company_keeps_the_liquid_one():
+    members = pd.DataFrame(
+        {
+            "ticker": ["AAPL", "GOOGL", "GOOG", "FOXA", "FOX"],
+            "cik": [320193, 1652044, 1652044, 1754301, 1754301],
+        }
+    )
+    volume = {"AAPL": 9e9, "GOOGL": 6e9, "GOOG": 4e9, "FOXA": 1e8, "FOX": 3e8}
+    kept = universe.one_line_per_company(members, volume)
+    # One line per CIK, the more liquid class, in the original order.
+    assert list(kept["ticker"]) == ["AAPL", "GOOGL", "FOX"]
+    assert kept["cik"].is_unique

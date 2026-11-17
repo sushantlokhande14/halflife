@@ -35,6 +35,29 @@ def load_bars(interval: str, symbol: str) -> pd.DataFrame | None:
     return pd.read_parquet(path) if path.exists() else None
 
 
+def companies(sessions: int = 60) -> pd.DataFrame:
+    """The universe with one share class per company (see universe.one_line_per_company).
+
+    Liquidity is the median daily dollar volume over the sessions before the 2-minute data
+    begins, so the choice of class uses nothing from the window being studied. The study and
+    the live runner both call this, so they measure and trade the same lines.
+    """
+    members = pd.read_parquet(DATA / "universe.parquet")
+    shared = members[members["cik"].duplicated(keep=False)]
+    if shared.empty:
+        return members
+    market = load_bars("2m", MARKET)
+    start = market.index[0] if market is not None and len(market) else pd.Timestamp.now(tz=UTC)
+    dollar_volume = {}
+    for row in shared.itertuples(index=False):
+        daily = load_bars("1d", row.yahoo)
+        if daily is None or daily.empty:
+            continue
+        before = daily[daily.index < start].tail(sessions)
+        dollar_volume[row.ticker] = float((before["close"] * before["volume"]).median())
+    return universe.one_line_per_company(members, dollar_volume)
+
+
 def ingest(fetcher: Fetcher, limit: int | None = None, workers: int = 4, refresh: bool = False) -> dict:
     DATA.mkdir(parents=True, exist_ok=True)
     now = datetime.now(UTC)
