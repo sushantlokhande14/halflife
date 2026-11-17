@@ -1,0 +1,43 @@
+{
+  "decision": "Ten trading minutes after the filing",
+  "model": "logistic, all features",
+  "model_id": "0fda095fd9ae",
+  "trained_events": 171,
+  "window": "2026-10-06 to 2026-11-16",
+  "continuation_base_rate": 0.49707602339181284,
+  "thresholds": {
+    "with": 0.55,
+    "against": 0.45
+  },
+  "costs_bps": {
+    "regular": 10.0,
+    "extended": 30.0
+  },
+  "coefficients": {
+    "z_d": 0.1816,
+    "abs_z_d": -0.1104,
+    "pre_z_aligned": -0.0211,
+    "retrace_z": 0.1669,
+    "late_z_aligned": 0.352,
+    "active_share": 0.3019,
+    "market_aligned_bps": 0.3099,
+    "log_sigma": -0.1053,
+    "log_dollar_volume": 0.0871,
+    "log_minutes_to_h": -0.3317,
+    "log_minutes_to_decision": 0.0,
+    "scheduled": 0.0096,
+    "session_pre": -0.0722,
+    "session_regular": -0.082,
+    "session_post": 0.0523,
+    "session_closed": 0.2919,
+    "category_earnings": 0.0096,
+    "category_deal": -0.3788,
+    "category_leadership": -0.0243,
+    "category_financing": 0.0,
+    "category_disclosure": 0.2852,
+    "category_vote": 0.0,
+    "category_governance": 0.0,
+    "category_other": -0.0267,
+    "category_misc": 0.0
+  }
+}

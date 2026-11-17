@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "fixed_at": "2026-11-17T23:21:43.910079+00:00",
+  "at_open": {
+    "rule": "with the move",
+    "segments": {
+      "earnings": {
+        "events": 355,
+        "continuation_rate": 0.5380281690140845,
+        "continuation_low": 0.494377162040442,
+        "continuation_high": 0.5811038142724394,
+        "median_remaining_bps": 14.78265607702589,
+        "mean_remaining_bps": 39.38191800723528
+      },
+      "other": {
+        "events": 186,
+        "continuation_rate": 0.478494623655914,
+        "continuation_low": 0.41898296617457664,
+        "continuation_high": 0.5386230509094035,
+        "median_remaining_bps": -8.446075377568363,
+        "mean_remaining_bps": 8.095260735870776
+      }
+    }
+  },
+  "ten_minutes": {
+    "rule": "logistic thresholds",
+    "with": 0.55,
+    "against": 0.45
+  }
+}
