@@ -1,17 +1,22 @@
 """The live runner: find new filings as they land, decide, and keep score.
 
-Every 20 seconds it asks the SEC search index for today's 8-Ks. A new one from an S&P 500
-company is looked up in that company's submissions file for its exact acceptance time,
-and recorded as detected, with how many seconds it took to notice.
+Every 20 seconds during trading hours (every two minutes overnight) it asks the SEC
+search index for today's 8-Ks. A new one from an S&P 500 company is looked up in that
+company's submissions file for its exact acceptance time and recorded as detected, with
+how long it took to notice.
 
-Ten trading minutes after the last price before the filing, the runner pulls fresh
-2-minute bars, computes the same features the model was trained on from the part of
-the path that exists, and records a prediction: the probability the move continues, the
-stance that follows, and every input. Filings that have not moved their stock are
-recorded too, as skipped, so nothing is left out of the record.
+Each filing gets up to two decisions, the two the backtest studied:
 
-After the settling close, it records what actually happened against each prediction.
-All of it goes into the hash-chained ledger in results/ledger.jsonl.
+* ten minutes: ten trading minutes after the last price before the filing, the model's
+  probability that the move continues, and the stance its thresholds give.
+* at the open: for a filing released before the regular session, right after the
+  session's first 2-minute bar, the fixed policy's stance (with the move) and its
+  confidence (the historical continuation rate for that kind of filing).
+
+A filing that has not moved its stock by a decision is recorded as skipped. After the
+settling close, each prediction gets a resolution. All of it goes into the hash-chained
+ledger in results/ledger.jsonl, and nothing is decided late: a decision more than ten
+minutes overdue is recorded as skipped instead.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ import pandas as pd
 from .clock import Clock, session, trading_days
 from .config import DATA, ET, MARKET, RESULTS, UTC
 from .diffusion import build_path
-from .features import DECISION_MINUTES, MIN_REACTION_Z, features, known_at
+from .features import DECISION_MINUTES, MIN_REACTION_Z, decision_index, features, known_at
 from .http import FetchError, Fetcher
 from .ledger import Ledger
 from .model import COST_EXTENDED_BPS, COST_REGULAR_BPS, columns_for, stance
@@ -50,6 +55,21 @@ HOLIDAYS = {
     date(2027, 6, 18), date(2027, 7, 5), date(2027, 9, 6), date(2027, 11, 25), date(2027, 12, 24),
 }
 STANCE_NAMES = {1: "with the move", -1: "against the move", 0: "stand aside"}
+LATE = pd.Timedelta(minutes=10)
+PUBLISH_WAIT = pd.Timedelta(seconds=90)  # a bar shows up on Yahoo a little after it ends
+
+
+@dataclass
+class Decision:
+    mode: str  # "ten_minutes" or "at_open"
+    due: str
+    done: bool = False
+    prediction: str | None = None  # hash of the ledger entry
+    side: int = 0
+    car_d: float = 0.0
+    cost_bps: float = 0.0
+    settles: str | None = None
+    resolved: bool = False
 
 
 @dataclass
@@ -57,19 +77,10 @@ class Tracked:
     accession: str
     ticker: str
     yahoo: str
-    cik: int
     category: str
-    items: str
     scheduled: bool
     accepted_at: str
-    detected_at: str
-    decided: bool = False
-    prediction_hash: str | None = None
-    side: int = 0
-    car_d: float = 0.0
-    cost_bps: float = 0.0
-    horizon: str | None = None
-    resolved: bool = False
+    decisions: list[Decision] = field(default_factory=list)
 
 
 @dataclass
@@ -86,7 +97,11 @@ class State:
         if not STATE.exists():
             return cls()
         raw = json.loads(STATE.read_text(encoding="utf-8"))
-        return cls(seen=raw["seen"], tracked=[Tracked(**t) for t in raw["tracked"]])
+        tracked = []
+        for item in raw["tracked"]:
+            decisions = [Decision(**d) for d in item.pop("decisions")]
+            tracked.append(Tracked(**item, decisions=decisions))
+        return cls(seen=raw["seen"], tracked=tracked)
 
 
 def upcoming_days(start: date, count: int = 10) -> list[date]:
@@ -103,180 +118,214 @@ class Runner:
         self.fetcher = fetcher
         self.by_cik = {int(row.cik): row for row in universe.itertuples(index=False)}
         self.bundle = bundle
-        self.model = bundle["model"]
         self.ledger = ledger or Ledger(LEDGER)
         self.state = State.load()
         self.baselined = bool(self.state.seen)
 
     # -- time ----------------------------------------------------------------
 
-    def clock(self, market_bars: pd.DataFrame) -> Clock:
-        past = trading_days(market_bars)
-        today = datetime.now(ET).date()
-        return Clock(sorted(set(past) | set(upcoming_days(today))))
-
     def market_bars(self) -> pd.DataFrame:
         now = datetime.now(UTC)
         return prices.bars(self.fetcher, MARKET, "2m", now - timedelta(days=7), now, cache=False)
 
-    # -- the three steps -------------------------------------------------------
-
-    def discover(self) -> None:
-        now = datetime.now(UTC)
+    def clock(self, market_bars: pd.DataFrame) -> Clock:
+        """Past trading days from the benchmark, plus the coming ones from the calendar, so
+        decision times and settling closes in the future have a place on the grid."""
         today = datetime.now(ET).date()
-        days = [today] if datetime.now(ET).hour >= 6 else [today - timedelta(days=1), today]
+        return Clock(sorted(set(trading_days(market_bars)) | set(upcoming_days(today))))
+
+    # -- finding filings -------------------------------------------------------
+
+    def discover(self, clock: Clock) -> None:
+        now = datetime.now(UTC)
+        local = datetime.now(ET)
+        days = [local.date()] if local.hour >= 6 else [local.date() - timedelta(days=1), local.date()]
         hits = [hit for day in days for hit in sec.filed_on(self.fetcher, day)]
         if not self.baselined:
-            # Everything already filed when the runner first starts is history, not news: a
-            # prediction about it would be made after the fact. Note it once and move on.
+            # Whatever is already filed when the runner first starts is history, not news.
             self.state.seen.extend(hit.accession for hit in hits)
             self.baselined = True
-            self.ledger.append("started", {"ignored_earlier_filings": len(hits), "model": self.bundle["model_id"]})
+            self.ledger.append(
+                "started",
+                {
+                    "ignored_earlier_filings": len(hits),
+                    "models": {mode: self.bundle[mode]["model_id"] for mode in ("ten_minutes", "at_open")},
+                    "policy_version": self.bundle["policy"]["version"],
+                },
+            )
             return
         for hit in hits:
             if hit.accession in self.state.seen:
                 continue
             company = next((self.by_cik[c] for c in hit.ciks if c in self.by_cik), None)
             if company is None:
-                self.state.seen.append(hit.accession)  # not in the universe
+                self.state.seen.append(hit.accession)  # not in the S&P 500
                 continue
             found = [f for f in sec.filings(self.fetcher, int(company.cik), use_cache=False) if f.accession == hit.accession]
             if not found:
-                continue  # the search index saw it first; try the submissions file next round
+                continue  # the search index saw it first; the submissions file will catch up
             filing = found[0]
             self.state.seen.append(hit.accession)
+            t0 = pd.Timestamp(filing.accepted_at)
+            decisions = [Decision("ten_minutes", clock.grid[clock.index_before(t0) + DECISION_MINUTES // clock.step].isoformat())]
+            opening = clock.regular_open(clock.reaction_day(t0))
+            if t0 < opening:
+                decisions.append(Decision("at_open", (opening + pd.Timedelta(minutes=clock.step)).isoformat()))
             latency = (now - filing.accepted_at).total_seconds()
-            entry = self.ledger.append(
+            self.ledger.append(
                 "detected",
                 {
                     "accession": filing.accession,
                     "ticker": company.ticker,
-                    "accepted_at": filing.accepted_at.isoformat(),
-                    "detection_latency_seconds": round(latency, 1),
-                    "items": ",".join(filing.items),
                     "category": filing.category,
-                    "session": session(filing.accepted_at),
+                    "items": ",".join(filing.items),
+                    "accepted_at": filing.accepted_at.isoformat(),
+                    "session": session(t0),
+                    "detection_latency_seconds": round(latency, 1),
+                    "decisions_due": {d.mode: d.due for d in decisions},
                 },
             )
-            log.info("detected %s %s (%s) %.0fs after acceptance", company.ticker, filing.category, filing.accession, latency)
+            log.info("detected %s %s %.0fs after acceptance", company.ticker, filing.category, latency)
             self.state.tracked.append(
                 Tracked(
                     accession=filing.accession,
                     ticker=company.ticker,
                     yahoo=company.yahoo,
-                    cik=int(company.cik),
                     category=filing.category,
-                    items=",".join(filing.items),
                     scheduled=filing.scheduled,
                     accepted_at=filing.accepted_at.isoformat(),
-                    detected_at=entry["recorded_at"],
+                    decisions=decisions,
                 )
             )
 
-    def _path(self, item: Tracked, market_bars: pd.DataFrame):
+    # -- deciding ----------------------------------------------------------------
+
+    def _path(self, clock: Clock, item: Tracked, market_bars: pd.DataFrame):
         now = datetime.now(UTC)
-        clock = self.clock(market_bars)
         stock_bars = prices.bars(self.fetcher, item.yahoo, "2m", now - timedelta(days=7), now, cache=False)
+        return build_path(clock, clock.on_grid(stock_bars), clock.on_grid(market_bars), pd.Timestamp(item.accepted_at))
+
+    def decide(self, clock: Clock, market_bars: pd.DataFrame) -> None:
+        now = pd.Timestamp(datetime.now(UTC))
+        for item in self.state.tracked:
+            for decision in item.decisions:
+                due = pd.Timestamp(decision.due)
+                if decision.done or now < due + PUBLISH_WAIT:
+                    continue
+                decision.done = True
+                base = {"accession": item.accession, "ticker": item.ticker, "decision": decision.mode}
+                if now > due + PUBLISH_WAIT + LATE:
+                    self.ledger.append("skipped", {**base, "reason": "too late to decide on time"})
+                    continue
+                self._decide_one(clock, market_bars, item, decision, base)
+
+    def _decide_one(self, clock: Clock, market_bars: pd.DataFrame, item: Tracked, decision: Decision, base: dict) -> None:
         t0 = pd.Timestamp(item.accepted_at)
-        path = build_path(clock, clock.on_grid(stock_bars), clock.on_grid(market_bars), t0)
-        return clock, path
-
-    def decide(self, market_bars: pd.DataFrame) -> None:
+        path = self._path(clock, item, market_bars)
+        horizon = clock.horizons(t0)
+        if path is None or horizon is None:
+            self.ledger.append("skipped", {**base, "reason": "no price path"})
+            return
+        if decision.mode == "ten_minutes":
+            index = decision_index(path)
+        else:
+            index = clock.position(pd.Timestamp(decision.due)) - path.ref_index
         now = pd.Timestamp(datetime.now(UTC))
-        clock = None
-        for item in self.state.tracked:
-            if item.decided:
-                continue
-            clock = clock or self.clock(market_bars)
-            t0 = pd.Timestamp(item.accepted_at)
-            decision_at = clock.grid[clock.index_before(t0) + DECISION_MINUTES // clock.step]
-            if now < decision_at + pd.Timedelta(seconds=90):  # wait for the bar to be published
-                continue
-            if now > decision_at + pd.Timedelta(minutes=10):
-                # Too late to count as a decision taken at its time; it is recorded, not scored.
-                item.decided = True
-                self.ledger.append("skipped", {"accession": item.accession, "ticker": item.ticker, "reason": "detected too late to decide on time"})
-                continue
-            clock, path = self._path(item, market_bars)
-            horizon = clock.horizons(t0)
-            item.decided = True
-            if path is None or horizon is None:
-                self.ledger.append("skipped", {"accession": item.accession, "ticker": item.ticker, "reason": "no price path"})
-                continue
-            daily = prices.bars(self.fetcher, item.yahoo, "1d", now - timedelta(days=60), now, chunk_days=400, live_ttl=3600)
-            market_daily = prices.bars(self.fetcher, MARKET, "1d", now - timedelta(days=60), now, chunk_days=400, live_ttl=3600)
-            sigma, dollar_volume = daily_context(daily, market_daily, clock.reaction_day(t0))
-            view = known_at(path)
-            if view is None or not np.isfinite(sigma):
-                self.ledger.append("skipped", {"accession": item.accession, "ticker": item.ticker, "reason": "not enough history"})
-                continue
-            values = features(view, sigma, dollar_volume, session(t0), item.category, item.scheduled)
-            base = {
-                "accession": item.accession,
-                "ticker": item.ticker,
-                "category": item.category,
-                "accepted_at": item.accepted_at,
-                "decided_at": clock.grid[path.ref_index + len(view.tau) - 1].isoformat(),
-                "move_so_far_bps": round(float(view.car[-1]) * 1e4, 1),
-                "move_so_far_sd": round(float(values["z_d"]), 3),
-                "settles_at": horizon[0].isoformat(),
+        daily = prices.bars(self.fetcher, item.yahoo, "1d", now - timedelta(days=60), now, chunk_days=400, live_ttl=3600)
+        market_daily = prices.bars(self.fetcher, MARKET, "1d", now - timedelta(days=60), now, chunk_days=400, live_ttl=3600)
+        sigma, dollar_volume = daily_context(daily, market_daily, clock.reaction_day(t0))
+        view = known_at(path, index=index)
+        if view is None or not np.isfinite(sigma):
+            self.ledger.append("skipped", {**base, "reason": "not enough history"})
+            return
+        values = features(view, sigma, dollar_volume, session(t0), item.category, item.scheduled)
+        decided_at = clock.grid[path.ref_index + len(view.tau) - 1]
+        detail = {
+            **base,
+            "category": item.category,
+            "accepted_at": item.accepted_at,
+            "decided_at": decided_at.isoformat(),
+            "move_so_far_bps": round(float(view.car[-1]) * 1e4, 1),
+            "move_so_far_sd": round(float(values["z_d"]), 3),
+            "settles_at": horizon[0].isoformat(),
+        }
+        if values["abs_z_d"] < MIN_REACTION_Z:
+            self.ledger.append("skipped", {**detail, "reason": f"moved less than {MIN_REACTION_Z} daily s.d."})
+            return
+        entry = self.bundle[decision.mode]
+        row = np.array([[values[name] for name in columns_for(entry["name"])]])
+        p_model = float(entry["model"].predict_proba(row)[0, 1])
+        cost = COST_REGULAR_BPS if session(decided_at) == "regular" else COST_EXTENDED_BPS
+        if decision.mode == "ten_minutes":
+            side = int(stance(np.array([p_model]))[0])
+            confidence = {"p_continue": round(p_model, 4), "source": "logistic model, no skill in the backtest"}
+        else:
+            segment = self.bundle["policy"]["at_open"]["segments"]["earnings" if item.category == "earnings" else "other"]
+            side = 1
+            confidence = {
+                "p_continue": round(segment["continuation_rate"], 4),
+                "p_low": round(segment["continuation_low"], 4),
+                "p_high": round(segment["continuation_high"], 4),
+                "historical_events": segment["events"],
+                "historical_median_remaining_bps": round(segment["median_remaining_bps"], 1),
+                "model_p_continue": round(p_model, 4),
+                "source": "historical rate for this kind of filing (policy v1)",
             }
-            if values["abs_z_d"] < MIN_REACTION_Z:
-                self.ledger.append("skipped", {**base, "reason": f"moved less than {MIN_REACTION_Z} daily s.d."})
-                continue
-            row = np.array([[values[name] for name in columns_for(self.bundle["name"])]])
-            probability = float(self.model.predict_proba(row)[0, 1])
-            side = int(stance(np.array([probability]))[0])
-            decision_session = session(pd.Timestamp(base["decided_at"]))
-            cost = COST_REGULAR_BPS if decision_session == "regular" else COST_EXTENDED_BPS
-            entry = self.ledger.append(
-                "prediction",
-                {
-                    **base,
-                    "p_continue": round(probability, 4),
-                    "stance": STANCE_NAMES[side],
-                    "cost_bps": cost,
-                    "model": self.bundle["model_id"],
-                    "features": {key: (round(float(v), 6) if np.isfinite(v) else None) for key, v in values.items()},
-                },
-            )
-            item.prediction_hash = entry["hash"]
-            item.side, item.car_d, item.cost_bps = side, float(view.car[-1]), cost
-            item.horizon = horizon[0].isoformat()
-            log.info("predicted %s: p=%.2f, %s", item.ticker, probability, STANCE_NAMES[side])
+        written = self.ledger.append(
+            "prediction",
+            {
+                **detail,
+                "stance": STANCE_NAMES[side],
+                "confidence": confidence,
+                "cost_bps": cost,
+                "model": entry["model_id"],
+                "features": {key: (round(float(v), 6) if np.isfinite(v) else None) for key, v in values.items()},
+            },
+        )
+        decision.prediction, decision.side = written["hash"], side
+        decision.car_d, decision.cost_bps = float(view.car[-1]), cost
+        decision.settles = horizon[0].isoformat()
+        log.info("%s %s: %s (move so far %.0f bps)", decision.mode, item.ticker, STANCE_NAMES[side], view.car[-1] * 1e4)
 
-    def resolve(self, market_bars: pd.DataFrame) -> None:
+    # -- scoring -----------------------------------------------------------------
+
+    def resolve(self, clock: Clock, market_bars: pd.DataFrame) -> None:
         now = pd.Timestamp(datetime.now(UTC))
         for item in self.state.tracked:
-            if not item.prediction_hash or item.resolved or now < pd.Timestamp(item.horizon) + pd.Timedelta(minutes=10):
+            pending = [d for d in item.decisions if d.prediction and not d.resolved and now >= pd.Timestamp(d.settles) + LATE]
+            if not pending:
                 continue
-            clock, path = self._path(item, market_bars)
+            path = self._path(clock, item, market_bars)
             if path is None:
                 continue
-            car_h = path.car_h
-            remaining = float(np.sign(item.car_d) * (car_h - item.car_d))
-            gross = item.side * remaining * 1e4
-            self.ledger.append(
-                "resolution",
-                {
-                    "accession": item.accession,
-                    "ticker": item.ticker,
-                    "prediction": item.prediction_hash,
-                    "move_at_settle_bps": round(car_h * 1e4, 1),
-                    "remaining_bps": round(remaining * 1e4, 1),
-                    "continued": remaining > 0,
-                    "net_bps": round(gross - (item.cost_bps if item.side else 0.0), 1),
-                },
-            )
-            item.resolved = True
-            log.info("resolved %s: remaining %.0f bps", item.ticker, remaining * 1e4)
+            for decision in pending:
+                remaining = float(np.sign(decision.car_d) * (path.car_h - decision.car_d))
+                gross = decision.side * remaining * 1e4
+                self.ledger.append(
+                    "resolution",
+                    {
+                        "accession": item.accession,
+                        "ticker": item.ticker,
+                        "decision": decision.mode,
+                        "prediction": decision.prediction,
+                        "move_at_settle_bps": round(path.car_h * 1e4, 1),
+                        "remaining_bps": round(remaining * 1e4, 1),
+                        "continued": remaining > 0,
+                        "net_bps": round(gross - (decision.cost_bps if decision.side else 0.0), 1),
+                    },
+                )
+                decision.resolved = True
+                log.info("resolved %s %s: remaining %.0f bps", decision.mode, item.ticker, remaining * 1e4)
+
+    # -- the loop ----------------------------------------------------------------
 
     def step(self) -> None:
-        self.discover()
-        if any(not t.decided or (t.prediction_hash and not t.resolved) for t in self.state.tracked):
-            market = self.market_bars()
-            self.decide(market)
-            self.resolve(market)
+        market = self.market_bars()
+        clock = self.clock(market)
+        self.discover(clock)
+        if any(not d.done or (d.prediction and not d.resolved) for t in self.state.tracked for d in t.decisions):
+            self.decide(clock, market)
+            self.resolve(clock, market)
         self.state.save()
 
     def run(self, minutes: float | None = None, poll_seconds: float = 20.0) -> None:
@@ -287,7 +336,8 @@ class Runner:
                 self.step()
             except FetchError as error:
                 log.warning("a source failed this round: %s", error)
-            time.sleep(max(0.0, poll_seconds - (time.monotonic() - started)))
+            trading = session(pd.Timestamp(datetime.now(UTC))) != "closed"
+            time.sleep(max(0.0, (poll_seconds if trading else 120.0) - (time.monotonic() - started)))
 
 
 def load_bundle() -> dict:
