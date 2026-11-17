@@ -106,6 +106,7 @@ class Runner:
         self.model = bundle["model"]
         self.ledger = ledger or Ledger(LEDGER)
         self.state = State.load()
+        self.baselined = bool(self.state.seen)
 
     # -- time ----------------------------------------------------------------
 
@@ -124,46 +125,53 @@ class Runner:
         now = datetime.now(UTC)
         today = datetime.now(ET).date()
         days = [today] if datetime.now(ET).hour >= 6 else [today - timedelta(days=1), today]
-        for day in days:
-            for hit in sec.filed_on(self.fetcher, day):
-                if hit.accession in self.state.seen:
-                    continue
-                company = next((self.by_cik[c] for c in hit.ciks if c in self.by_cik), None)
-                if company is None:
-                    self.state.seen.append(hit.accession)  # not in the universe
-                    continue
-                found = [f for f in sec.filings(self.fetcher, int(company.cik), use_cache=False) if f.accession == hit.accession]
-                if not found:
-                    continue  # the search index saw it first; try the submissions file next round
-                filing = found[0]
-                self.state.seen.append(hit.accession)
-                latency = (now - filing.accepted_at).total_seconds()
-                entry = self.ledger.append(
-                    "detected",
-                    {
-                        "accession": filing.accession,
-                        "ticker": company.ticker,
-                        "accepted_at": filing.accepted_at.isoformat(),
-                        "detection_latency_seconds": round(latency, 1),
-                        "items": ",".join(filing.items),
-                        "category": filing.category,
-                        "session": session(filing.accepted_at),
-                    },
+        hits = [hit for day in days for hit in sec.filed_on(self.fetcher, day)]
+        if not self.baselined:
+            # Everything already filed when the runner first starts is history, not news: a
+            # prediction about it would be made after the fact. Note it once and move on.
+            self.state.seen.extend(hit.accession for hit in hits)
+            self.baselined = True
+            self.ledger.append("started", {"ignored_earlier_filings": len(hits), "model": self.bundle["model_id"]})
+            return
+        for hit in hits:
+            if hit.accession in self.state.seen:
+                continue
+            company = next((self.by_cik[c] for c in hit.ciks if c in self.by_cik), None)
+            if company is None:
+                self.state.seen.append(hit.accession)  # not in the universe
+                continue
+            found = [f for f in sec.filings(self.fetcher, int(company.cik), use_cache=False) if f.accession == hit.accession]
+            if not found:
+                continue  # the search index saw it first; try the submissions file next round
+            filing = found[0]
+            self.state.seen.append(hit.accession)
+            latency = (now - filing.accepted_at).total_seconds()
+            entry = self.ledger.append(
+                "detected",
+                {
+                    "accession": filing.accession,
+                    "ticker": company.ticker,
+                    "accepted_at": filing.accepted_at.isoformat(),
+                    "detection_latency_seconds": round(latency, 1),
+                    "items": ",".join(filing.items),
+                    "category": filing.category,
+                    "session": session(filing.accepted_at),
+                },
+            )
+            log.info("detected %s %s (%s) %.0fs after acceptance", company.ticker, filing.category, filing.accession, latency)
+            self.state.tracked.append(
+                Tracked(
+                    accession=filing.accession,
+                    ticker=company.ticker,
+                    yahoo=company.yahoo,
+                    cik=int(company.cik),
+                    category=filing.category,
+                    items=",".join(filing.items),
+                    scheduled=filing.scheduled,
+                    accepted_at=filing.accepted_at.isoformat(),
+                    detected_at=entry["recorded_at"],
                 )
-                log.info("detected %s %s (%s) %.0fs after acceptance", company.ticker, filing.category, filing.accession, latency)
-                self.state.tracked.append(
-                    Tracked(
-                        accession=filing.accession,
-                        ticker=company.ticker,
-                        yahoo=company.yahoo,
-                        cik=int(company.cik),
-                        category=filing.category,
-                        items=",".join(filing.items),
-                        scheduled=filing.scheduled,
-                        accepted_at=filing.accepted_at.isoformat(),
-                        detected_at=entry["recorded_at"],
-                    )
-                )
+            )
 
     def _path(self, item: Tracked, market_bars: pd.DataFrame):
         now = datetime.now(UTC)
@@ -183,6 +191,11 @@ class Runner:
             t0 = pd.Timestamp(item.accepted_at)
             decision_at = clock.grid[clock.index_before(t0) + DECISION_MINUTES // clock.step]
             if now < decision_at + pd.Timedelta(seconds=90):  # wait for the bar to be published
+                continue
+            if now > decision_at + pd.Timedelta(minutes=10):
+                # Too late to count as a decision taken at its time; it is recorded, not scored.
+                item.decided = True
+                self.ledger.append("skipped", {"accession": item.accession, "ticker": item.ticker, "reason": "detected too late to decide on time"})
                 continue
             clock, path = self._path(item, market_bars)
             horizon = clock.horizons(t0)
