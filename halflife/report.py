@@ -57,14 +57,17 @@ def curves_figure(curves: list[dict], path) -> None:
         x = curve["taus"][keep]
         ax.fill_between(x, curve["low"][keep], curve["high"][keep], color=color, alpha=0.14, linewidth=0)
         ax.plot(x, curve["mean"][keep], color=color, linewidth=2, label=f"{curve['label']} (n={curve['n']})")
+        # A direct label where the curve has room, so it is not identified by color alone.
+        at = curve.get("label_at", x[len(x) // 2])
+        index = int(np.argmin(np.abs(x - at)))
         ax.annotate(
             curve["label"],
-            (x[-1], curve["mean"][keep][-1]),
-            xytext=(6, 0),
+            (x[index], curve["mean"][keep][index]),
+            xytext=curve.get("label_offset", (0, 10)),
             textcoords="offset points",
             color=INK_SECONDARY,
             fontsize=9,
-            va="center",
+            ha="center",
         )
     ax.axhline(0.5, color=MUTED, linewidth=1, linestyle=(0, (3, 3)))
     ax.axhline(1.0, color=MUTED, linewidth=1)

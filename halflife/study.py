@@ -74,8 +74,20 @@ def daily_context(stock_daily: pd.DataFrame, market_daily: pd.DataFrame, before_
     return float(np.std(abnormal, ddof=1)), dollar_volume
 
 
-def _event_row(event: dict, path: Path, sigma: float, dollar_volume: float) -> dict:
-    measured = measure(path)
+def open_shares(clock: Clock, path: Path, t0) -> dict:
+    """For an event before its reaction day's regular open: the share of the move priced
+    in before the open, and the share added by the first two minutes of the session."""
+    day = clock.reaction_day(t0)
+    opening = clock.regular_open(day)
+    if pd.Timestamp(t0) >= opening or path.car_h == 0:
+        return {"done_before_open": float("nan"), "opening_jump": float("nan")}
+    first_bar = clock.position(opening + pd.Timedelta(minutes=clock.step)) - path.ref_index
+    before = float(path.car[first_bar - 1])
+    return {"done_before_open": before / path.car_h, "opening_jump": (float(path.car[first_bar]) - before) / path.car_h}
+
+
+def _event_row(event: dict, path: Path, sigma: float, dollar_volume: float, clock: Clock) -> dict:
+    measured = measure(path) | open_shares(clock, path, event["accepted_at"])
     z = measured["car_h"] / sigma if sigma and np.isfinite(sigma) else float("nan")
     return {
         **event,
@@ -135,6 +147,7 @@ def build(placebo_seed: int = 17) -> tuple[pd.DataFrame, pd.DataFrame, dict[str,
                     path,
                     sigma,
                     dollar_volume,
+                    clock,
                 )
             )
         # Placebo moments: random trading times at least two trading days from any filing.
@@ -169,6 +182,7 @@ def build(placebo_seed: int = 17) -> tuple[pd.DataFrame, pd.DataFrame, dict[str,
                     path,
                     sigma,
                     dollar_volume,
+                    clock,
                 )
             )
             taken += 1
@@ -209,6 +223,8 @@ def summarize(frame: pd.DataFrame, keys: list[str], rng: np.random.Generator) ->
                 "fit_half_life_median": float(np.nanmedian(informative["fit_half_life"])) if len(informative) else float("nan"),
                 "done_by_10min": float(np.nanmedian(informative["r10"])) if len(informative) else float("nan"),
                 "done_by_60min": float(np.nanmedian(informative["r60"])) if len(informative) else float("nan"),
+                "done_before_open": float(np.nanmedian(informative["done_before_open"])) if informative["done_before_open"].notna().any() else float("nan"),
+                "opening_jump": float(np.nanmedian(informative["opening_jump"])) if informative["opening_jump"].notna().any() else float("nan"),
                 "pre_event_share": float(np.nanmedian(informative["pre_car"] / informative["car_h"])) if len(informative) else float("nan"),
                 "overshoot_share": float(np.mean(informative["peak_ratio"] > 1.25)) if len(informative) else float("nan"),
                 "next_day_continues": float(np.mean(np.sign(informative["drift_next_day"]) == np.sign(informative["car_h"]))) if len(informative) else float("nan"),
