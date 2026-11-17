@@ -15,7 +15,6 @@ from . import model as model_module
 from . import report, study
 from .clock import Clock, trading_days
 from .config import DATA, ET, MARKET, RESULTS, UTC
-from .diffusion import fit_two_speed
 from .http import Fetcher
 from .ingest import load_bars
 from .sources import calendars
@@ -39,10 +38,11 @@ def md_table(frame: pd.DataFrame, formats: dict[str, str] | None = None) -> str:
     return "\n".join(lines)
 
 
+# (label, selection, where the direct label goes: trading minutes, offset in points)
 CURVE_GROUPS = [
-    ("Earnings, after the close", lambda e: (e["category"] == "earnings") & (e["session"] == "post")),
-    ("Earnings, before the open", lambda e: (e["category"] == "earnings") & (e["session"] == "pre")),
-    ("Other filings, during the session", lambda e: (e["category"] != "earnings") & (e["session"] == "regular")),
+    ("Earnings, after the close", lambda e: (e["category"] == "earnings") & (e["session"] == "post"), 150.0, (0, -16)),
+    ("Earnings, before the open", lambda e: (e["category"] == "earnings") & (e["session"] == "pre"), 40.0, (-30, 12)),
+    ("Other filings, during the session", lambda e: (e["category"] != "earnings") & (e["session"] == "regular"), 20.0, (0, 12)),
 ]
 
 
@@ -60,23 +60,19 @@ def run_study() -> dict:
     for name, frame in (("by_category", by_category), ("earnings_by_session", earnings_by_session), ("by_session", by_session)):
         frame.to_csv(out / f"{name}.csv", index=False)
 
-    curves, fits, curve_tables = [], [], []
+    curves, curve_tables = [], []
     informative = events[events["informative"]]
-    for label, select in CURVE_GROUPS:
+    for label, select, label_at, label_offset in CURVE_GROUPS:
         group = informative[select(informative)]
         if len(group) < 8:
             continue
         # Show each curve as far as three quarters of its events can still be followed.
         tau_max = float(min(960.0, np.quantile(group["minutes_to_h"], 0.25)))
         taus, mean, low, high, counts = study.mean_curve(group, paths, tau_max, rng)
-        curves.append({"label": label, "taus": taus, "mean": mean, "low": low, "high": high, "n": len(group)})
-        fit = fit_two_speed(taus, mean) or {}
-        fits.append({"group": label, "events": len(group), "minutes_shown": tau_max, **{k: v for k, v in fit.items() if k != "params"}})
+        curves.append({"label": label, "taus": taus, "mean": mean, "low": low, "high": high, "n": len(group), "label_at": label_at, "label_offset": label_offset})
         curve_tables.append(pd.DataFrame({"group": label, "tau": taus, "mean": mean, "low": low, "high": high, "events": counts}))
     if curve_tables:
         pd.concat(curve_tables).to_csv(out / "curves.csv", index=False)
-    fits_frame = pd.DataFrame(fits)
-    fits_frame.to_csv(out / "two_speed_fits.csv", index=False)
 
     earnings = events[events["category"] == "earnings"]
     latency_earnings = study.latency_table(earnings, paths, rng)
@@ -93,7 +89,7 @@ def run_study() -> dict:
     report.half_life_figure(earnings[earnings["informative"]], figures / "earnings_half_life.png")
 
     fomc = fomc_illustration()
-    write_findings(events, placebo, by_category, earnings_by_session, fits_frame, latency_earnings, latency_all, fomc)
+    write_findings(events, placebo, by_category, earnings_by_session, latency_earnings, latency_all, fomc)
     return {"events": len(events), "placebo": len(placebo), "informative": int(events["informative"].sum())}
 
 
@@ -126,12 +122,12 @@ def fomc_illustration() -> dict | None:
     }
 
 
-def write_findings(events, placebo, by_category, earnings_by_session, fits, latency_earnings, latency_all, fomc) -> None:
+def write_findings(events, placebo, by_category, earnings_by_session, latency_earnings, latency_all, fomc) -> None:
     window = f"{events['accepted_at'].min():%Y-%m-%d} to {events['accepted_at'].max():%Y-%m-%d}"
     shown = by_category[
         ["category", "events", "informative", "informative_share", "median_abs_move_informative_bps", "t50_median", "t50_low", "t50_high", "t90_median", "done_by_10min", "pre_event_share", "next_day_continues"]
     ]
-    session_cols = ["session", "events", "informative", "informative_share", "median_abs_move_informative_bps", "t50_median", "t50_low", "t50_high", "t90_median", "fit_half_life_median", "done_by_10min", "done_by_60min", "pre_event_share", "overshoot_share", "next_day_continues"]
+    session_cols = ["session", "events", "informative", "informative_share", "median_abs_move_informative_bps", "t50_median", "t50_low", "t50_high", "t90_median", "done_by_10min", "done_by_60min", "done_before_open", "opening_jump", "pre_event_share", "overshoot_share", "next_day_continues"]
     lines = [
         "# Study results (generated)",
         "",
@@ -145,11 +141,10 @@ def write_findings(events, placebo, by_category, earnings_by_session, fits, late
         "",
         "## Earnings, by when the filing landed",
         "",
-        md_table(earnings_by_session[session_cols], {"informative_share": ".1%", "done_by_10min": ".0%", "done_by_60min": ".0%", "pre_event_share": ".0%", "overshoot_share": ".0%", "next_day_continues": ".0%", "median_abs_move_informative_bps": ".0f", "t50_median": ".0f", "t50_low": ".0f", "t50_high": ".0f", "t90_median": ".0f", "fit_half_life_median": ".0f"}),
+        md_table(earnings_by_session[session_cols], {"informative_share": ".1%", "done_by_10min": ".0%", "done_by_60min": ".0%", "pre_event_share": ".0%", "overshoot_share": ".0%", "next_day_continues": ".0%", "median_abs_move_informative_bps": ".0f", "t50_median": ".0f", "t50_low": ".0f", "t50_high": ".0f", "t90_median": ".0f", "done_before_open": ".0%", "opening_jump": ".0%"}),
         "",
-        "## Two-speed fits to the average curves",
-        "",
-        md_table(fits, {"fast_share": ".0%", "fast_half_life": ".1f", "slow_half_life": ".0f", "r2": ".3f", "minutes_shown": ".0f"}) if len(fits) else "(not enough events)",
+        "done_before_open: share of the move priced in before the regular open; opening_jump: share added by the",
+        "first two minutes of the regular session. Both are medians over informative events filed before the open.",
         "",
         "## Latency: what is left at each reaction time",
         "",
@@ -175,60 +170,114 @@ def write_findings(events, placebo, by_category, earnings_by_session, fits, late
     (RESULTS / "study" / "findings.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
 
+MODE_TITLES = {
+    "ten_minutes": "Ten trading minutes after the filing",
+    "at_open": "Right after the regular open, for filings released before it",
+}
+MAIN = "logistic, all features"
+
+
 def run_model() -> dict:
-    out = RESULTS / "model"
-    out.mkdir(parents=True, exist_ok=True)
     events, placebo, paths = study.load()
     market_bars = load_bars("2m", MARKET)
     clock = Clock(trading_days(market_bars))
-    data = model_module.dataset(events, paths, clock.grid)
-    data.drop(columns=[c for c in data.columns if c.startswith("category_") or c.startswith("session_")]).to_csv(out / "dataset_summary.csv", index=False)
-    result = model_module.walk_forward(data)
-    metrics = model_module.evaluate(result.predictions)
-    metrics.to_csv(out / "metrics.csv", index=False)
-    pd.DataFrame(result.folds).to_csv(out / "folds.csv", index=False)
-    result.predictions.to_csv(out / "out_of_sample_predictions.csv", index=False)
-    main = "logistic, all features"
-    reliability = model_module.reliability(result.predictions, main)
-    reliability.to_csv(out / "reliability.csv", index=False)
-    report_reliability(reliability, RESULTS / "figures" / "reliability.png")
+    bundle, summary = {}, {}
+    lines = ["# Model results (generated)", ""]
+    for mode in model_module.MODES:
+        out = RESULTS / "model" / mode
+        out.mkdir(parents=True, exist_ok=True)
+        data = model_module.dataset(events, paths, clock, mode)
+        result = model_module.walk_forward(data)
+        metrics = model_module.evaluate(result.predictions)
+        metrics.to_csv(out / "metrics.csv", index=False)
+        pd.DataFrame(result.folds).drop(columns=["start"]).to_csv(out / "folds.csv", index=False)
+        result.predictions.to_csv(out / "out_of_sample_predictions.csv", index=False)
+        reliability = model_module.reliability(result.predictions, MAIN)
+        reliability.to_csv(out / "reliability.csv", index=False)
+        report_reliability(reliability, RESULTS / "figures" / f"reliability_{mode}.png", MODE_TITLES[mode])
 
-    final = model_module.fit_final(data, main)
-    blob = pickle.dumps(final)
-    model_id = hashlib.sha256(blob).hexdigest()[:12]
-    bundle = {"model": final, "name": main, "model_id": model_id, "trained_events": len(data), "features": model_module.columns_for(main)}
+        final = model_module.fit_final(data, MAIN)
+        model_id = hashlib.sha256(pickle.dumps(final)).hexdigest()[:12]
+        bundle[mode] = {"model": final, "name": MAIN, "model_id": model_id, "trained_events": len(data), "features": model_module.columns_for(MAIN)}
+        card = {
+            "decision": MODE_TITLES[mode],
+            "model": MAIN,
+            "model_id": model_id,
+            "trained_events": len(data),
+            "window": f"{data['accepted_at'].min():%Y-%m-%d} to {data['accepted_at'].max():%Y-%m-%d}",
+            "continuation_base_rate": float(data["continues"].mean()),
+            "thresholds": {"with": model_module.WITH, "against": model_module.AGAINST},
+            "costs_bps": {"regular": model_module.COST_REGULAR_BPS, "extended": model_module.COST_EXTENDED_BPS},
+            "coefficients": dict(zip(model_module.columns_for(MAIN), np.round(final[-1].coef_[0], 4).tolist())),
+        }
+        (out / "model_card.json").write_text(json.dumps(card, indent=2), encoding="utf-8", newline="\n")
+        summary[mode] = {"eligible": len(data), "out_of_sample": len(result.predictions), "folds": len(result.folds), "model_id": model_id}
+        lines += [
+            f"## {MODE_TITLES[mode]}",
+            "",
+            f"Eligible events (moved at least {model_module.MIN_REACTION_Z} daily s.d. by the decision): {len(data)}; "
+            f"out of sample: {len(result.predictions)} across {len(result.folds)} weekly folds. "
+            f"Base rate of continuation: {data['continues'].mean():.1%}.",
+            "",
+            md_table(metrics, {"auc": ".3f", "brier": ".4f", "brier_skill": ".3f", "log_loss": ".4f", "coverage": ".0%", "hit_rate": ".1%", "mean_gross_bps": ".1f", "mean_net_bps": ".1f", "t_net": ".2f"}),
+            "",
+            "Reliability of the main model's out-of-sample probabilities:",
+            "",
+            md_table(reliability, {"predicted": ".3f", "observed": ".3f"}),
+            "",
+        ]
+        if mode == "at_open":
+            from .robustness import with_the_move
+
+            robust = with_the_move(data)
+            robust.to_csv(out / "rule_robustness.csv", index=False)
+            lines += [
+                "### Stress test: go with the opening move, every event, hold to the close",
+                "",
+                "t_days counts each trading day once (events on the same day are not independent).",
+                "",
+                md_table(robust, {"hit_rate": ".1%", "mean_net_bps": ".1f", "net_low_bps": ".1f", "net_high_bps": ".1f", "median_net_bps": ".1f", "trimmed_mean_net_bps": ".1f", "t_events": ".2f", "t_days": ".2f"}),
+                "",
+            ]
+            bundle["policy"] = policy(data)
+            (RESULTS / "model" / "policy.json").write_text(json.dumps(bundle["policy"], indent=2), encoding="utf-8", newline="\n")
     with open(DATA / "model.pkl", "wb") as handle:
         pickle.dump(bundle, handle)
-    card = {
-        "model": main,
-        "model_id": model_id,
-        "trained_events": len(data),
-        "window": f"{data['accepted_at'].min():%Y-%m-%d} to {data['accepted_at'].max():%Y-%m-%d}",
-        "continuation_base_rate": float(data["continues"].mean()),
-        "thresholds": {"with": model_module.WITH, "against": model_module.AGAINST},
-        "costs_bps": {"regular": model_module.COST_REGULAR_BPS, "extended": model_module.COST_EXTENDED_BPS},
-        "coefficients": dict(zip(model_module.columns_for(main), np.round(final[-1].coef_[0], 4).tolist())),
+    (RESULTS / "model" / "findings.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    return summary
+
+
+def policy(data: pd.DataFrame) -> dict:
+    """The live policy, fixed before any live outcome is seen.
+
+    At the open: go with the move (the best rule in the walk-forward test, and fragile under
+    the stress test, which is why it is being tested live). Its confidence is the historical
+    continuation rate for the same kind of filing, with a 90% interval, not a model output.
+    At ten minutes: the logistic model's probability and the usual thresholds, recorded as
+    an ongoing out-of-sample test of a model that showed no skill in the backtest.
+    """
+    segments = {}
+    for name, part in (("earnings", data[data["category"] == "earnings"]), ("other", data[data["category"] != "earnings"])):
+        continued = int(part["continues"].sum())
+        low, high = report.wilson(continued, len(part))
+        gross = part["remaining"].to_numpy() * 1e4
+        segments[name] = {
+            "events": len(part),
+            "continuation_rate": continued / len(part),
+            "continuation_low": low,
+            "continuation_high": high,
+            "median_remaining_bps": float(np.median(gross)),
+            "mean_remaining_bps": float(np.mean(gross)),
+        }
+    return {
+        "version": 1,
+        "fixed_at": datetime.now(UTC).isoformat(),
+        "at_open": {"rule": "with the move", "segments": segments},
+        "ten_minutes": {"rule": "logistic thresholds", "with": model_module.WITH, "against": model_module.AGAINST},
     }
-    (out / "model_card.json").write_text(json.dumps(card, indent=2), encoding="utf-8", newline="\n")
-    lines = [
-        "# Model results (generated)",
-        "",
-        f"Eligible events (moved at least {model_module.MIN_REACTION_Z} daily s.d. by the decision): {len(data)}; "
-        f"out of sample: {len(result.predictions)} across {len(result.folds)} weekly folds. "
-        f"Base rate of continuation: {data['continues'].mean():.1%}.",
-        "",
-        md_table(metrics, {"auc": ".3f", "brier": ".4f", "brier_skill": ".3f", "log_loss": ".4f", "coverage": ".0%", "hit_rate": ".1%", "mean_gross_bps": ".1f", "mean_net_bps": ".1f", "t_net": ".2f"}),
-        "",
-        "## Reliability of the main model's probabilities (out of sample)",
-        "",
-        md_table(reliability, {"predicted": ".3f", "observed": ".3f"}),
-        "",
-    ]
-    (out / "findings.md").write_text("\n".join(lines), encoding="utf-8", newline="\n")
-    return {"eligible": len(data), "out_of_sample": len(result.predictions), "folds": len(result.folds), "model_id": model_id}
 
 
-def report_reliability(table: pd.DataFrame, path) -> None:
+def report_reliability(table: pd.DataFrame, path, subtitle: str = "") -> None:
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(5.4, 5.0), dpi=150)
@@ -240,7 +289,7 @@ def report_reliability(table: pd.DataFrame, path) -> None:
     high = float(max(table["predicted"].max(), table["observed"].max())) + 0.05
     ax.set_xlim(low, high)
     ax.set_ylim(low, high)
-    report.style(ax, "Predicted vs observed continuation", "Predicted probability (bin mean)", "Observed frequency")
+    report.style(ax, f"Predicted vs observed continuation\n{subtitle}" if subtitle else "Predicted vs observed continuation", "Predicted probability (bin mean)", "Observed frequency")
     fig.tight_layout()
     fig.savefig(path, facecolor=report.SURFACE)
     plt.close(fig)
@@ -288,5 +337,6 @@ def run_radar(days: int = 7) -> str:
         upcoming = ipos[ipos["status"] == "upcoming"].drop_duplicates("ticker") if not ipos.empty else ipos
         lines.append(md_table(upcoming[["date", "ticker", "name", "exchange", "price", "deal_size"]].astype(str)) if len(upcoming) else "None listed.")
     text = "\n".join(lines) + "\n"
+    RESULTS.mkdir(parents=True, exist_ok=True)
     (RESULTS / "radar.md").write_text(text, encoding="utf-8", newline="\n")
     return text

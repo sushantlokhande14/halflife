@@ -34,8 +34,14 @@ class KnownAt:
     minutes_to_h: float
 
 
-def known_at(path: Path, decision_minutes: float = DECISION_MINUTES) -> KnownAt | None:
-    index = int(np.searchsorted(path.tau, decision_minutes, side="right")) - 1
+def decision_index(path: Path, decision_minutes: float = DECISION_MINUTES) -> int:
+    return int(np.searchsorted(path.tau, decision_minutes, side="right")) - 1
+
+
+def known_at(path: Path, decision_minutes: float = DECISION_MINUTES, index: int | None = None) -> KnownAt | None:
+    """The path up to the decision: `decision_minutes` after the last pre-event price, or
+    an explicit grid offset (`index`), such as the first bar of the regular session."""
+    index = decision_index(path, decision_minutes) if index is None else index
     if index < 2 or index >= path.i_h:
         return None  # too little reaction yet, or the settling close comes first
     cut = slice(0, index + 1)
@@ -66,6 +72,7 @@ def features(view: KnownAt, sigma: float, dollar_volume: float, session: str, ca
         "log_sigma": float(np.log(scale)) if np.isfinite(scale) else np.nan,
         "log_dollar_volume": float(np.log(dollar_volume)) if dollar_volume and dollar_volume > 0 else np.nan,
         "log_minutes_to_h": float(np.log(view.minutes_to_h)),
+        "log_minutes_to_decision": float(np.log(view.tau[-1])),
         "scheduled": float(scheduled),
     }
     for name in SESSIONS:
@@ -87,10 +94,10 @@ FEATURE_NAMES = list(
 )
 
 
-def outcome(path: Path, decision_minutes: float = DECISION_MINUTES) -> dict:
+def outcome(path: Path, decision_minutes: float = DECISION_MINUTES, index: int | None = None) -> dict:
     """Did the move continue from the decision to the settling close, and by how much
     (in the direction of the move so far)."""
-    index = int(np.searchsorted(path.tau, decision_minutes, side="right")) - 1
+    index = decision_index(path, decision_minutes) if index is None else index
     car_d = float(path.car[index])
     remaining = float(np.sign(car_d) * (path.car_h - car_d))
     return {"continues": int(remaining > 0), "remaining": remaining, "car_d": car_d}

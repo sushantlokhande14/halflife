@@ -44,19 +44,38 @@ def settle_time(reaction_day) -> pd.Timestamp:
     return pd.Timestamp(datetime.combine(pd.Timestamp(reaction_day).date(), time(16, 0), ET)).tz_convert(UTC)
 
 
-def dataset(events: pd.DataFrame, paths: dict[str, Path], clock_grid: pd.DatetimeIndex) -> pd.DataFrame:
+# Two decision points. "ten_minutes": ten trading minutes after the last price before
+# the filing. "at_open": for filings released before their reaction day's regular
+# session, right after its first 2-minute bar, which is where the study finds most
+# earnings news is priced.
+MODES = ("ten_minutes", "at_open")
+
+
+def open_index(clock, path: Path, event) -> int | None:
+    opening = clock.regular_open(pd.Timestamp(event.reaction_day).date())
+    if pd.Timestamp(event.accepted_at) >= opening:
+        return None
+    return clock.position(opening + pd.Timedelta(minutes=clock.step)) - path.ref_index
+
+
+def dataset(events: pd.DataFrame, paths: dict[str, Path], clock, mode: str = "ten_minutes") -> pd.DataFrame:
     rows = []
     for event in events.itertuples(index=False):
         path = paths.get(event.event_id)
         if path is None or not np.isfinite(event.sigma):
             continue
-        view = known_at(path)
+        index = None
+        if mode == "at_open":
+            index = open_index(clock, path, event)
+            if index is None:
+                continue
+        view = known_at(path, index=index)
         if view is None:
             continue
         values = features(view, event.sigma, event.dollar_volume, event.session, event.category, event.scheduled)
         if not np.isfinite(values["abs_z_d"]) or values["abs_z_d"] < MIN_REACTION_Z:
             continue
-        decided_at = clock_grid[path.ref_index + len(view.tau) - 1]
+        decided_at = clock.grid[path.ref_index + len(view.tau) - 1]
         rows.append(
             {
                 "event_id": event.event_id,
@@ -68,7 +87,7 @@ def dataset(events: pd.DataFrame, paths: dict[str, Path], clock_grid: pd.Datetim
                 "decision_session": session_of(decided_at),
                 "known_at": settle_time(event.reaction_day),
                 **values,
-                **outcome(path),
+                **outcome(path, index=len(view.tau) - 1),
             }
         )
     frame = pd.DataFrame(rows).sort_values("accepted_at").reset_index(drop=True)
