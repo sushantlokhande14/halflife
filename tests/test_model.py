@@ -76,6 +76,7 @@ def test_walk_forward_never_trains_on_an_outcome_from_the_future():
             {
                 "event_id": f"e{i}",
                 "accepted_at": accepted,
+                "decided_at": accepted + pd.Timedelta(minutes=10),
                 # The outcome is known one day later.
                 "known_at": accepted + pd.Timedelta(days=1),
                 "decision_session": "regular",

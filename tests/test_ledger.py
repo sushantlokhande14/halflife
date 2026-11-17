@@ -51,3 +51,18 @@ def test_deleting_or_reordering_entries_is_detected(tmp_path):
     assert verify(ledger.path)
     write(ledger.path, [entries[0], entries[2], entries[1], entries[3]])
     assert verify(ledger.path)
+
+
+def test_a_restart_with_new_models_is_recorded_once(tmp_path):
+    from halflife.live import model_change
+
+    ledger = Ledger(tmp_path / "ledger.jsonl")
+    v1 = {"models": {"ten_minutes": "aaa", "at_open": "bbb"}, "policy_version": 1}
+    v2 = {"models": {"ten_minutes": "ccc", "at_open": "ddd"}, "policy_version": 2}
+    assert model_change(ledger.entries(), v1) is None  # nothing started yet: the start entry says it
+    ledger.append("started", {"ignored_earlier_filings": 3, **v1})
+    assert model_change(ledger.entries(), v1) is None  # same models: nothing to record
+    change = model_change(ledger.entries(), v2)
+    assert change == {**v2, "replaces": v1}
+    ledger.append("models changed", change)
+    assert model_change(ledger.entries(), v2) is None  # recorded once, not on every restart

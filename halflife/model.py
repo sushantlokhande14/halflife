@@ -121,7 +121,8 @@ class WalkForward:
     folds: list[dict] = field(default_factory=list)
 
 
-def walk_forward(data: pd.DataFrame, min_train: int = 80) -> WalkForward:
+def walk_forward(data: pd.DataFrame, min_train: int = 80, models: dict | None = None) -> WalkForward:
+    models = candidates() if models is None else models
     # Calendar weeks in New York time. (Periods carry no timezone, hence the explicit localize below.)
     weeks = data["accepted_at"].dt.tz_convert(ET).dt.tz_localize(None).dt.to_period("W-SUN")
     results = []
@@ -133,8 +134,8 @@ def walk_forward(data: pd.DataFrame, min_train: int = 80) -> WalkForward:
         if len(train) < min_train or len(test) == 0 or train["continues"].nunique() < 2:
             continue
         fold = {"week": str(week), "start": start, "train": len(train), "test": len(test)}
-        frame = test[["event_id", "accepted_at", "decision_session", "category", "session", "continues", "remaining", "cost_bps"]].copy()
-        for name, factory in candidates().items():
+        frame = test[["event_id", "accepted_at", "decided_at", "decision_session", "category", "session", "continues", "remaining", "cost_bps"]].copy()
+        for name, factory in models.items():
             if factory is None:
                 frame[name] = float(train["continues"].mean())
                 continue
@@ -165,14 +166,33 @@ def t_stat(values: np.ndarray) -> float:
     return float(np.mean(values) / (np.std(values, ddof=1) / np.sqrt(len(values))))
 
 
+def clustered_t(values: np.ndarray, clusters: np.ndarray) -> float:
+    """t-statistic of the mean with one observation per cluster (the cluster mean): events
+    decided on the same day share that day's market and count once."""
+    frame = pd.DataFrame({"v": values, "c": clusters})
+    means = frame.groupby("c")["v"].mean().to_numpy()
+    if len(means) < 3:
+        return float("nan")
+    return float(means.mean() / (means.std(ddof=1) / np.sqrt(len(means))))
+
+
+def decision_days(frame: pd.DataFrame) -> np.ndarray:
+    return frame["decided_at"].dt.tz_convert(ET).dt.date.to_numpy()
+
+
 def evaluate(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Skill (AUC, Brier) and money (net of costs) for each model, out of sample. Money is
+    tested twice: per trade (t_net), and per trading day (t_net_days), because filings
+    decided on the same day share that day's market and are not independent bets."""
     y = predictions["continues"].to_numpy()
     base = float(np.mean(y))
+    days = decision_days(predictions)
     rows = []
     for name in candidates():
         p = np.clip(predictions[name].to_numpy(), 1e-4, 1 - 1e-4)
         trades = trade_returns(predictions, p)
-        taken = trades[trades["side"] != 0]
+        chosen = trades["side"].to_numpy() != 0
+        taken = trades[chosen]
         hits = (np.sign(taken["gross_bps"]) > 0).mean() if len(taken) else float("nan")
         brier = brier_score_loss(y, p)
         rows.append(
@@ -189,6 +209,7 @@ def evaluate(predictions: pd.DataFrame) -> pd.DataFrame:
                 "mean_gross_bps": float(taken["gross_bps"].mean()) if len(taken) else float("nan"),
                 "mean_net_bps": float(taken["net_bps"].mean()) if len(taken) else float("nan"),
                 "t_net": t_stat(taken["net_bps"].to_numpy()),
+                "t_net_days": clustered_t(taken["net_bps"].to_numpy(), days[chosen]) if len(taken) else float("nan"),
             }
         )
     # Rules that need no model at all, for scale.
@@ -206,6 +227,7 @@ def evaluate(predictions: pd.DataFrame) -> pd.DataFrame:
                 "mean_gross_bps": float(np.mean(side * remaining)),
                 "mean_net_bps": float(np.mean(net)),
                 "t_net": t_stat(net),
+                "t_net_days": clustered_t(net, days),
             }
         )
     return pd.DataFrame(rows)

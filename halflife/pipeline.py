@@ -174,7 +174,11 @@ MODE_TITLES = {
     "ten_minutes": "Ten trading minutes after the filing",
     "at_open": "Right after the regular open, for filings released before it",
 }
-MAIN = "logistic, all features"
+SHORT_TITLES = {"ten_minutes": "Ten minutes in", "at_open": "At the open"}
+# The model each live decision records. At ten minutes nothing had skill, so the plain
+# logistic model is kept as an ongoing control. At the open, gradient boosting was the one
+# model that made money out of sample, so that is the one the live test scores.
+LIVE_MODELS = {"ten_minutes": "logistic, all features", "at_open": "gradient boosting"}
 
 
 def run_model() -> dict:
@@ -192,24 +196,26 @@ def run_model() -> dict:
         metrics.to_csv(out / "metrics.csv", index=False)
         pd.DataFrame(result.folds).drop(columns=["start"]).to_csv(out / "folds.csv", index=False)
         result.predictions.to_csv(out / "out_of_sample_predictions.csv", index=False)
-        reliability = model_module.reliability(result.predictions, MAIN)
+        name = LIVE_MODELS[mode]
+        reliability = model_module.reliability(result.predictions, name)
         reliability.to_csv(out / "reliability.csv", index=False)
-        report_reliability(reliability, RESULTS / "figures" / f"reliability_{mode}.png", MODE_TITLES[mode])
+        report_reliability(reliability, RESULTS / "figures" / f"reliability_{mode}.png", f"{SHORT_TITLES[mode]}, {name}")
 
-        final = model_module.fit_final(data, MAIN)
+        final = model_module.fit_final(data, name)
         model_id = hashlib.sha256(pickle.dumps(final)).hexdigest()[:12]
-        bundle[mode] = {"model": final, "name": MAIN, "model_id": model_id, "trained_events": len(data), "features": model_module.columns_for(MAIN)}
+        bundle[mode] = {"model": final, "name": name, "model_id": model_id, "trained_events": len(data), "features": model_module.columns_for(name)}
         card = {
             "decision": MODE_TITLES[mode],
-            "model": MAIN,
+            "model": name,
             "model_id": model_id,
             "trained_events": len(data),
             "window": f"{data['accepted_at'].min():%Y-%m-%d} to {data['accepted_at'].max():%Y-%m-%d}",
             "continuation_base_rate": float(data["continues"].mean()),
             "thresholds": {"with": model_module.WITH, "against": model_module.AGAINST},
             "costs_bps": {"regular": model_module.COST_REGULAR_BPS, "extended": model_module.COST_EXTENDED_BPS},
-            "coefficients": dict(zip(model_module.columns_for(MAIN), np.round(final[-1].coef_[0], 4).tolist())),
         }
+        if hasattr(final, "steps"):  # a linear model: its coefficients are the explanation
+            card["coefficients"] = dict(zip(model_module.columns_for(name), np.round(final[-1].coef_[0], 4).tolist()))
         (out / "model_card.json").write_text(json.dumps(card, indent=2), encoding="utf-8", newline="\n")
         summary[mode] = {"eligible": len(data), "out_of_sample": len(result.predictions), "folds": len(result.folds), "model_id": model_id}
         lines += [
@@ -219,18 +225,30 @@ def run_model() -> dict:
             f"out of sample: {len(result.predictions)} across {len(result.folds)} weekly folds. "
             f"Base rate of continuation: {data['continues'].mean():.1%}.",
             "",
-            md_table(metrics, {"auc": ".3f", "brier": ".4f", "brier_skill": ".3f", "log_loss": ".4f", "coverage": ".0%", "hit_rate": ".1%", "mean_gross_bps": ".1f", "mean_net_bps": ".1f", "t_net": ".2f"}),
+            md_table(metrics, {"auc": ".3f", "brier": ".4f", "brier_skill": ".3f", "log_loss": ".4f", "coverage": ".0%", "hit_rate": ".1%", "mean_gross_bps": ".1f", "mean_net_bps": ".1f", "t_net": ".2f", "t_net_days": ".2f"}),
             "",
-            "Reliability of the main model's out-of-sample probabilities:",
+            "t_net counts every trade; t_net_days counts each trading day once.",
+            "",
+            f"Reliability of the live model's out-of-sample probabilities ({name}):",
             "",
             md_table(reliability, {"predicted": ".3f", "observed": ".3f"}),
             "",
         ]
         if mode == "at_open":
-            from .robustness import with_the_move
+            from .robustness import boosting_breakdown, boosting_neighbors, with_the_move
 
             robust = with_the_move(data)
             robust.to_csv(out / "rule_robustness.csv", index=False)
+            neighbors = boosting_neighbors(data)
+            neighbors.to_csv(out / "boosting_neighbors.csv", index=False)
+            breakdown = boosting_breakdown(result.predictions)
+            breakdown.to_csv(out / "boosting_breakdown.csv", index=False)
+            summary[mode]["boosting_neighbors"] = {
+                "settings": len(neighbors),
+                "t_net_at_least_2": int((neighbors["t_net"] >= 2).sum()),
+                "median_t_net": float(neighbors["t_net"].median()),
+                "median_t_net_days": float(neighbors["t_net_days"].median()),
+            }
             lines += [
                 "### Stress test: go with the opening move, every event, hold to the close",
                 "",
@@ -238,8 +256,16 @@ def run_model() -> dict:
                 "",
                 md_table(robust, {"hit_rate": ".1%", "mean_net_bps": ".1f", "net_low_bps": ".1f", "net_high_bps": ".1f", "median_net_bps": ".1f", "trimmed_mean_net_bps": ".1f", "t_events": ".2f", "t_days": ".2f"}),
                 "",
+                "### Stress test: gradient boosting at neighbouring settings (walk-forward, out of sample)",
+                "",
+                md_table(neighbors, {"auc": ".3f", "mean_net_bps": ".1f", "t_net": ".2f", "t_net_days": ".2f"}),
+                "",
+                "### Where gradient boosting's out-of-sample money came from",
+                "",
+                md_table(breakdown, {"with_the_move_share": ".0%", "mean_net_bps": ".1f", "t_net": ".2f"}),
+                "",
             ]
-            bundle["policy"] = policy(data)
+            bundle["policy"] = keep_fixed_at(policy(data), RESULTS / "model" / "policy.json")
             (RESULTS / "model" / "policy.json").write_text(json.dumps(bundle["policy"], indent=2), encoding="utf-8", newline="\n")
     with open(DATA / "model.pkl", "wb") as handle:
         pickle.dump(bundle, handle)
@@ -247,12 +273,25 @@ def run_model() -> dict:
     return summary
 
 
+def keep_fixed_at(new: dict, path) -> dict:
+    """A rerun that reproduces the same policy keeps the time it was first fixed: the
+    timestamp says when the policy was decided, not when the pipeline last ran."""
+    if path.exists():
+        old = json.loads(path.read_text(encoding="utf-8"))
+        if {k: v for k, v in old.items() if k != "fixed_at"} == {k: v for k, v in new.items() if k != "fixed_at"}:
+            return {**new, "fixed_at": old["fixed_at"]}
+    return new
+
+
 def policy(data: pd.DataFrame) -> dict:
     """The live policy, fixed before any live outcome is seen.
 
-    At the open: go with the move (the best rule in the walk-forward test, and fragile under
-    the stress test, which is why it is being tested live). Its confidence is the historical
-    continuation rate for the same kind of filing, with a 90% interval, not a model output.
+    At the open, two stances are recorded and scored side by side:
+    * the rule: go with the move. It made the most per trade out of sample and fell apart
+      under the stress test. Its confidence is the historical continuation rate for the same
+      kind of filing, with a 90% interval, not a model output.
+    * gradient boosting's stance from its probability and the usual thresholds: the one model
+      that made money out of sample, steadier than the rule but short of significance.
     At ten minutes: the logistic model's probability and the usual thresholds, recorded as
     an ongoing out-of-sample test of a model that showed no skill in the backtest.
     """
@@ -270,10 +309,17 @@ def policy(data: pd.DataFrame) -> dict:
             "mean_remaining_bps": float(np.mean(gross)),
         }
     return {
-        "version": 1,
+        "version": 2,
         "fixed_at": datetime.now(UTC).isoformat(),
-        "at_open": {"rule": "with the move", "segments": segments},
-        "ten_minutes": {"rule": "logistic thresholds", "with": model_module.WITH, "against": model_module.AGAINST},
+        "supersedes": {
+            "version": 1,
+            "why": "v1 was fit on data that counted 38 filings twice, once per share class of Alphabet, Fox and "
+            "News Corp. v2 measures each company once, refits the models, recomputes the confidences, and "
+            "scores gradient boosting's stance at the open alongside the rule's, because on the corrected data "
+            "it was the one model that made money out of sample. Fixed before the runner had made any decision.",
+        },
+        "at_open": {"rule": "with the move", "segments": segments, "scored_alongside": LIVE_MODELS["at_open"]},
+        "ten_minutes": {"rule": "logistic thresholds", "model": LIVE_MODELS["ten_minutes"], "with": model_module.WITH, "against": model_module.AGAINST},
     }
 
 

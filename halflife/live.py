@@ -66,6 +66,7 @@ class Decision:
     done: bool = False
     prediction: str | None = None  # hash of the ledger entry
     side: int = 0
+    model_side: int = 0  # at the open: gradient boosting's stance, scored alongside the rule's
     car_d: float = 0.0
     cost_bps: float = 0.0
     settles: str | None = None
@@ -104,6 +105,18 @@ class State:
         return cls(seen=raw["seen"], tracked=tracked)
 
 
+def model_change(entries: list[dict], current: dict) -> dict | None:
+    """The change to record when the runner restarts with other models or another policy
+    than the ledger last named, or None. Every decision then traces to what made it."""
+    last = None
+    for entry in entries:
+        if entry["kind"] in ("started", "models changed"):
+            last = {"models": entry["payload"]["models"], "policy_version": entry["payload"]["policy_version"]}
+    if last is None or last == current:
+        return None
+    return {**current, "replaces": last}
+
+
 def upcoming_days(start: date, count: int = 10) -> list[date]:
     days, cursor = [], start
     while len(days) < count:
@@ -121,6 +134,18 @@ class Runner:
         self.ledger = ledger or Ledger(LEDGER)
         self.state = State.load()
         self.baselined = bool(self.state.seen)
+        if self.baselined:
+            change = model_change(self.ledger.entries(), self.deciding())
+            if change is not None:
+                self.ledger.append("models changed", {**change, "note": bundle["policy"].get("supersedes", {}).get("why")})
+
+    def deciding(self) -> dict:
+        """What makes the decisions: recorded when the runner first starts, and again
+        whenever it restarts with different models or a different policy."""
+        return {
+            "models": {mode: self.bundle[mode]["model_id"] for mode in ("ten_minutes", "at_open")},
+            "policy_version": self.bundle["policy"]["version"],
+        }
 
     # -- time ----------------------------------------------------------------
 
@@ -145,14 +170,7 @@ class Runner:
             # Whatever is already filed when the runner first starts is history, not news.
             self.state.seen.extend(hit.accession for hit in hits)
             self.baselined = True
-            self.ledger.append(
-                "started",
-                {
-                    "ignored_earlier_filings": len(hits),
-                    "models": {mode: self.bundle[mode]["model_id"] for mode in ("ten_minutes", "at_open")},
-                    "policy_version": self.bundle["policy"]["version"],
-                },
-            )
+            self.ledger.append("started", {"ignored_earlier_filings": len(hits), **self.deciding()})
             return
         for hit in hits:
             if hit.accession in self.state.seen:
@@ -256,11 +274,15 @@ class Runner:
         row = np.array([[values[name] for name in columns_for(entry["name"])]])
         p_model = float(entry["model"].predict_proba(row)[0, 1])
         cost = COST_REGULAR_BPS if session(decided_at) == "regular" else COST_EXTENDED_BPS
+        policy = self.bundle["policy"]
+        model_side = int(stance(np.array([p_model]))[0])
+        extra = {}
         if decision.mode == "ten_minutes":
-            side = int(stance(np.array([p_model]))[0])
-            confidence = {"p_continue": round(p_model, 4), "source": "logistic model, no skill in the backtest"}
+            side = model_side
+            confidence = {"p_continue": round(p_model, 4), "source": f"{entry['name']}, no skill in the backtest"}
         else:
-            segment = self.bundle["policy"]["at_open"]["segments"]["earnings" if item.category == "earnings" else "other"]
+            # The rule, with its confidence from history; and the model, scored alongside it.
+            segment = policy["at_open"]["segments"]["earnings" if item.category == "earnings" else "other"]
             side = 1
             confidence = {
                 "p_continue": round(segment["continuation_rate"], 4),
@@ -268,21 +290,23 @@ class Runner:
                 "p_high": round(segment["continuation_high"], 4),
                 "historical_events": segment["events"],
                 "historical_median_remaining_bps": round(segment["median_remaining_bps"], 1),
-                "model_p_continue": round(p_model, 4),
-                "source": "historical rate for this kind of filing (policy v1)",
+                "source": f"historical rate for this kind of filing (policy v{policy['version']})",
             }
+            extra = {"model_stance": STANCE_NAMES[model_side], "model_p_continue": round(p_model, 4), "model_name": entry["name"]}
         written = self.ledger.append(
             "prediction",
             {
                 **detail,
                 "stance": STANCE_NAMES[side],
                 "confidence": confidence,
+                **extra,
                 "cost_bps": cost,
                 "model": entry["model_id"],
                 "features": {key: (round(float(v), 6) if np.isfinite(v) else None) for key, v in values.items()},
             },
         )
         decision.prediction, decision.side = written["hash"], side
+        decision.model_side = model_side if decision.mode == "at_open" else 0
         decision.car_d, decision.cost_bps = float(view.car[-1]), cost
         decision.settles = horizon[0].isoformat()
         log.info("%s %s: %s (move so far %.0f bps)", decision.mode, item.ticker, STANCE_NAMES[side], view.car[-1] * 1e4)
@@ -300,7 +324,11 @@ class Runner:
                 continue
             for decision in pending:
                 remaining = float(np.sign(decision.car_d) * (path.car_h - decision.car_d))
-                gross = decision.side * remaining * 1e4
+
+                def net(side: int) -> float:
+                    return round(side * remaining * 1e4 - (decision.cost_bps if side else 0.0), 1)
+
+                scored = {"model_net_bps": net(decision.model_side)} if decision.mode == "at_open" else {}
                 self.ledger.append(
                     "resolution",
                     {
@@ -311,7 +339,8 @@ class Runner:
                         "move_at_settle_bps": round(path.car_h * 1e4, 1),
                         "remaining_bps": round(remaining * 1e4, 1),
                         "continued": remaining > 0,
-                        "net_bps": round(gross - (decision.cost_bps if decision.side else 0.0), 1),
+                        "net_bps": net(decision.side),
+                        **scored,
                     },
                 )
                 decision.resolved = True
