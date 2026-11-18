@@ -3,8 +3,9 @@
 A backtest can be rerun until it looks good; a live record cannot, if it is written
 before outcomes are known and cannot be edited afterwards. Every entry here carries the
 hash of the entry before it, so changing, removing or reordering any past entry breaks
-every hash after it. Committing the file to git after each session adds an outside
-timestamp: a prediction pushed before its outcome existed is provably a prediction.
+every hash after it. Pushing the file to GitHub each day before the close (publish.py)
+adds an outside timestamp: a prediction pushed before its outcome existed is provably a
+prediction.
 """
 
 from __future__ import annotations
@@ -58,9 +59,22 @@ class Ledger:
 
 def verify(path: Path | str) -> list[str]:
     """Every problem found, or an empty list for an intact chain."""
+    path = Path(path)
+    return verify_text(path.read_text(encoding="utf-8")) if path.exists() else []
+
+
+def verify_text(text: str) -> list[str]:
+    """The same check on a ledger's text, such as the exact content about to be committed."""
     problems = []
+    if text.strip() and not text.endswith("\n"):
+        problems.append("the last entry is incomplete (no newline at the end)")
     previous = GENESIS
-    for position, entry in enumerate(Ledger(path).entries()):
+    for position, line in enumerate(line for line in text.splitlines() if line.strip()):
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            problems.append(f"entry {position}: not valid JSON")
+            break
         body = {key: entry.get(key) for key in ("seq", "recorded_at", "kind", "payload", "prev")}
         if entry.get("seq") != position:
             problems.append(f"entry {position}: sequence number {entry.get('seq')} out of order")

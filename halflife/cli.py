@@ -6,6 +6,7 @@
     radar           upcoming Fed meetings, S&P 500 earnings and IPOs
     live            watch for new filings, predict, and score, into results/ledger.jsonl
     verify-ledger   check that the ledger's hash chain is intact
+    publish-ledger  commit the ledger's new entries once they verify, and push them
 """
 
 from __future__ import annotations
@@ -32,6 +33,9 @@ def main(argv: list[str] | None = None) -> int:
     live.add_argument("--minutes", type=float, help="stop after this long; default runs until interrupted")
     live.add_argument("--poll", type=float, default=20.0, help="seconds between checks for new filings")
     sub.add_parser("verify-ledger")
+    publish = sub.add_parser("publish-ledger")
+    publish.add_argument("--log", help="also append the outcome to this file (for scheduled runs, which have no console)")
+    publish.add_argument("--no-push", action="store_true", help="commit only")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -74,6 +78,25 @@ def main(argv: list[str] | None = None) -> int:
         problems = verify(RESULTS / "ledger.jsonl")
         print("ledger intact" if not problems else "\n".join(problems))
         return 1 if problems else 0
+    elif args.command == "publish-ledger":
+        from datetime import datetime, timezone
+        from pathlib import Path
+
+        from .publish import publish as run
+
+        try:
+            outcome = run(push=not args.no_push)
+        except Exception as error:  # a scheduled run has no console: the log is where it can say why
+            outcome = f"failed: {error!r}"
+        line = f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S} UTC  {outcome}"
+        if args.log:
+            log_path = Path(args.log)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
+        print(line)
+        # Anything short of "committed and pushed" or "nothing new" shows as a failed run in Task Scheduler.
+        return 1 if any(word in outcome for word in ("not committed", "not pushed", "failed")) else 0
     return 0
 
 
