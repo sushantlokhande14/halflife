@@ -88,10 +88,12 @@ class Tracked:
 class State:
     seen: list[str] = field(default_factory=list)
     tracked: list[Tracked] = field(default_factory=list)
+    started_at: str | None = None  # when the runner first started: anything accepted earlier is history
 
     def save(self) -> None:
         STATE.parent.mkdir(parents=True, exist_ok=True)
-        STATE.write_text(json.dumps({"seen": self.seen, "tracked": [asdict(t) for t in self.tracked]}, indent=1), encoding="utf-8")
+        raw = {"seen": self.seen, "tracked": [asdict(t) for t in self.tracked], "started_at": self.started_at}
+        STATE.write_text(json.dumps(raw, indent=1), encoding="utf-8")
 
     @classmethod
     def load(cls) -> "State":
@@ -102,7 +104,7 @@ class State:
         for item in raw["tracked"]:
             decisions = [Decision(**d) for d in item.pop("decisions")]
             tracked.append(Tracked(**item, decisions=decisions))
-        return cls(seen=raw["seen"], tracked=tracked)
+        return cls(seen=raw["seen"], tracked=tracked, started_at=raw.get("started_at"))
 
 
 def model_change(entries: list[dict], current: dict) -> dict | None:
@@ -134,6 +136,10 @@ class Runner:
         self.ledger = ledger or Ledger(LEDGER)
         self.state = State.load()
         self.baselined = bool(self.state.seen)
+        if self.baselined and self.state.started_at is None:
+            # A state saved before started_at existed: the ledger's first entry says when.
+            first = next((e for e in self.ledger.entries() if e["kind"] == "started"), None)
+            self.state.started_at = first["recorded_at"] if first else None
         if self.baselined:
             change = model_change(self.ledger.entries(), self.deciding())
             if change is not None:
@@ -164,11 +170,15 @@ class Runner:
     def discover(self, clock: Clock) -> None:
         now = datetime.now(UTC)
         local = datetime.now(ET)
-        days = [local.date()] if local.hour >= 6 else [local.date() - timedelta(days=1), local.date()]
-        hits = [hit for day in days for hit in sec.filed_on(self.fetcher, day)]
+        # An 8-K accepted after 17:30 Eastern carries the next business day's filing date (a
+        # federal business day, which can skip a day the market is open), and the index lists
+        # it under that date. So search a few days ahead, and before 06:00 from yesterday.
+        start = local.date() - timedelta(days=1) if local.hour < 6 else local.date()
+        hits = sec.filed_between(self.fetcher, start, local.date() + timedelta(days=4))
         if not self.baselined:
             # Whatever is already filed when the runner first starts is history, not news.
             self.state.seen.extend(hit.accession for hit in hits)
+            self.state.started_at = now.isoformat()
             self.baselined = True
             self.ledger.append("started", {"ignored_earlier_filings": len(hits), **self.deciding()})
             return
@@ -184,6 +194,8 @@ class Runner:
                 continue  # the search index saw it first; the submissions file will catch up
             filing = found[0]
             self.state.seen.append(hit.accession)
+            if self.state.started_at and filing.accepted_at < datetime.fromisoformat(self.state.started_at):
+                continue  # accepted before the runner first started, but listed later: history too
             t0 = pd.Timestamp(filing.accepted_at)
             decisions = [Decision("ten_minutes", clock.grid[clock.index_before(t0) + DECISION_MINUTES // clock.step].isoformat())]
             opening = clock.regular_open(clock.reaction_day(t0))

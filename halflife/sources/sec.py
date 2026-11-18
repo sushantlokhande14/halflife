@@ -20,7 +20,7 @@ from ..config import UTC
 from ..http import Fetcher
 
 SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
-SEARCH = "https://efts.sec.gov/LATEST/search-index?forms=8-K&dateRange=custom&startdt={day}&enddt={day}&from={offset}"
+SEARCH = "https://efts.sec.gov/LATEST/search-index?forms=8-K&dateRange=custom&startdt={start}&enddt={end}&from={offset}"
 
 # 8-K item codes, mapped to the kind of news they carry. A filing usually lists several
 # items; the first match in this order decides its category. 9.01 (exhibits) is on
@@ -124,11 +124,20 @@ def parse_search(raw: bytes | str) -> tuple[list[SearchHit], int]:
 
 def filed_on(fetcher: Fetcher, day: date) -> list[SearchHit]:
     """Every 8-K the search index lists for a filing date, all pages."""
+    return filed_between(fetcher, day, day)
+
+
+def filed_between(fetcher: Fetcher, start: date, end: date) -> list[SearchHit]:
+    """Every 8-K the search index lists with a filing date from start to end, all pages.
+
+    The filing date is not always the day of acceptance: EDGAR dates an 8-K accepted after
+    17:30 Eastern to the next business day, and the index lists it under that date.
+    """
     hits: list[SearchHit] = []
     offset = 0
     while True:
         page, total = parse_search(
-            fetcher.get(SEARCH.format(day=day.isoformat(), offset=offset), use_cache=False)
+            fetcher.get(SEARCH.format(start=start.isoformat(), end=end.isoformat(), offset=offset), use_cache=False)
         )
         hits.extend(page)
         offset += len(page)
