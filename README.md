@@ -106,7 +106,11 @@ The two results that weakened under scrutiny are exactly what a live test is for
 
 A filing that has not moved its stock is recorded as skipped. A decision more than ten minutes late is also skipped, not made. The runner ignores everything filed before it first started.
 
-Every entry goes into [results/ledger.jsonl](results/ledger.jsonl) with the hash of the entry before it. Changing, deleting or reordering any past entry breaks every hash after it (`halflife verify-ledger`), and tests show each of those forgeries being caught. Committing the ledger to git before outcomes are known adds an outside timestamp.
+Every entry goes into [results/ledger.jsonl](results/ledger.jsonl) with the hash of the entry before it. Changing, deleting or reordering any past entry breaks every hash after it (`halflife verify-ledger`), and tests show each of those forgeries being caught.
+
+The hash chain proves order, not time. The time comes from GitHub: `halflife publish-ledger` runs every day at 15:45 Eastern, verifies the exact content it is about to commit, commits the ledger and nothing else, and pushes it. Every prediction settles at a 16:00 close or later, so one made before 15:45 is pushed before that day's close, and one made after it settles no earlier than the next day's close, after the next push. Each prediction reaches GitHub before its outcome exists.
+
+One gap: an 8-K accepted after 17:30 Eastern is dated to the next business day. The runner searches ahead for those dates, but on the evening it checked (Nov 17), the SEC's search index listed none of them yet, so the runner may not see such a filing until the next morning. That is still in time for the decision at the open, the one the study supports; the ten-minute decision is then recorded as skipped. About 9% of the study's filings were accepted after 17:30.
 
 The record started on Nov 17, 2026, under policy v1. Twenty minutes later, before any decision, a check found that v1 had been fit on data that counted 38 filings twice: one 8-K from Alphabet, Fox or News Corp had been measured once per share class. Removing those duplicates, under 3% of the data, moved gradient boosting's out-of-sample t from 0.78 to 2.06 and the rule's from 2.78 to 2.60. The ledger's second entry records the switch to v2 and why; nothing in it was rewritten. A backtest that sensitive is one more reason to judge these strategies by the live record. It is far too young to say anything yet; it exists so that in a few months it can.
 
@@ -126,6 +130,7 @@ halflife model       # walk-forward evaluation, stress tests, live policy
 halflife radar
 halflife live        # runs until stopped with Ctrl-C; results/ledger.jsonl
 halflife verify-ledger
+halflife publish-ledger   # commit and push the ledger's new entries; scheduled daily at 15:45 Eastern
 pytest
 ```
 
@@ -133,7 +138,7 @@ The SEC asks automated clients to identify themselves. Set `HALFLIFE_SEC_USER_AG
 
 ## Tests
 
-43 tests, all passing. They cover:
+49 tests, all passing. They cover:
 
 - the trading clock, including that nights and weekends take no time and that the grid never sees a later trade;
 - recovery of known half-lives from synthetic paths, with and without noise;
@@ -141,6 +146,8 @@ The SEC asks automated clients to identify themselves. Set `HALFLIFE_SEC_USER_AG
 - walk-forward folds that never train on an outcome from after the fold began;
 - one share class per company, so no filing is measured twice;
 - the ledger catching an edit, a careful re-hash, a deletion and a reordering, and recording a change of models exactly once;
+- the daily publish committing only the ledger, refusing a broken chain or a half-written last entry, and leaving other staged or unpushed work alone;
+- the runner treating a filing accepted before it first started as history, even when the index lists it later;
 - every parser, run against recorded responses.
 
 ## Limits
@@ -161,6 +168,7 @@ halflife/model.py       walk-forward evaluation, stances, costs, per-trade and p
 halflife/robustness.py  the stress tests for what made money at the open
 halflife/live.py        detection, decisions and resolutions, into the ledger
 halflife/ledger.py      the hash chain
+halflife/publish.py     the daily commit and push of the ledger
 halflife/sources/       SEC, Yahoo, Fed, Nasdaq and Wikipedia readers
 results/                tables, figures, the model cards, the policy, the radar and the live ledger
 ```
